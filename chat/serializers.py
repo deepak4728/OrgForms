@@ -19,6 +19,7 @@ class ChatRequestSerializer(serializers.Serializer):
     conversation_id = serializers.UUIDField(required=False, allow_null=True)
     regenerate = serializers.BooleanField(required=False, default=False)
     temporary = serializers.BooleanField(required=False, default=False)
+    compact_summary = serializers.CharField(required=False, allow_blank=True, max_length=1800)
     model_options = serializers.DictField(required=False, default=dict)
     context_options = serializers.DictField(required=False, default=dict)
     messages = ChatMessageSerializer(many=True, allow_empty=False, max_length=100)
@@ -34,7 +35,7 @@ class ChatRequestSerializer(serializers.Serializer):
         return attrs
 
     def validate_context_options(self, value):
-        allowed = {"conversation_history", "organization", "organization_profile", "documents", "saved_memory"}
+        allowed = {"conversation_history", "organization", "organization_profile", "documents", "saved_memory", "account_memory"}
         unknown = set(value) - allowed
         if unknown:
             raise serializers.ValidationError(
@@ -84,7 +85,7 @@ class ChatConversationDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatConversation
-        fields = ("id", "title", "model", "created_at", "updated_at", "messages")
+        fields = ("id", "title", "model", "created_at", "updated_at", "messages", "context_summary", "compacted_message_count")
 
 
 class ChatMemoryPreferenceSerializer(serializers.Serializer):
@@ -117,3 +118,32 @@ class ChatMemorySerializer(serializers.ModelSerializer):
         if content and duplicates.exists():
             raise serializers.ValidationError({"content": "This memory is already saved."})
         return attrs
+
+
+class CompactContextSerializer(serializers.Serializer):
+    organization_slug = serializers.SlugField(required=False, max_length=180)
+    conversation_id = serializers.UUIDField(required=False)
+    messages = ChatMessageSerializer(many=True, required=False, max_length=100)
+    context_summary = serializers.CharField(required=False, allow_blank=True, max_length=1800)
+
+    def validate(self, attrs):
+        if not attrs.get("conversation_id") and not attrs.get("messages"):
+            raise serializers.ValidationError("Choose a conversation with messages to compact.")
+        if sum(len(m["content"]) for m in attrs.get("messages", [])) > 200000:
+            raise serializers.ValidationError("Keep message text under 200,000 characters.")
+        return attrs
+
+
+class AccountMemorySerializer(serializers.Serializer):
+    content = serializers.CharField(required=False, allow_blank=True, max_length=2400, trim_whitespace=True)
+    use_enabled = serializers.BooleanField(required=False)
+    auto_update = serializers.BooleanField(required=False)
+    revision = serializers.IntegerField(min_value=0)
+
+
+class DeleteChatsSerializer(serializers.Serializer):
+    organization_slug = serializers.SlugField(required=False, max_length=180)
+    conversation_ids = serializers.ListField(child=serializers.UUIDField(), min_length=1, max_length=100)
+
+    def validate_conversation_ids(self, value):
+        return list(dict.fromkeys(value))

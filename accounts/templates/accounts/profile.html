@@ -16,6 +16,7 @@
   </section>
 </div>
 
+{% if personal_features %}
 <section class="surface profile-portfolio-card">
   <div class="section-heading"><div><p class="eyebrow">Personal portfolio</p><h2>Details you can reuse</h2><p class="muted">Keep preferences and facts in a JSON profile. Form assistance can use it only when you turn on the option below.</p></div><span class="pill">Private to you</span></div>
   <form method="post" class="profile-settings-form">{% csrf_token %}<input type="hidden" name="action" value="portfolio">
@@ -34,6 +35,7 @@
   <div class="personal-document-list">{% for document in personal_documents %}<div class="personal-document-row"><a href="{% url 'accounts:personal-document' document.pk %}">{{ document.title }}</a><span class="muted">{{ document.get_kind_display }} · {{ document.created_at|date:"M j, Y" }}</span><form method="post" onsubmit="return confirm('Permanently remove this private file?')">{% csrf_token %}<input type="hidden" name="action" value="delete-document"><input type="hidden" name="document_id" value="{{ document.pk }}"><button type="submit" class="button tertiary compact-button">Remove</button></form></div>{% empty %}<p class="muted">No personal files yet.</p>{% endfor %}</div>
 </section>
 
+{% endif %}
 <dialog class="workspace-dialog password-dialog" id="password-dialog" aria-labelledby="password-dialog-title" {% if password_form.errors %}open{% endif %}>
   <div class="dialog-heading"><div><p class="eyebrow">Sign-in security</p><h2 id="password-dialog-title">Change password</h2><p class="muted">Your current password is never shown.</p></div><button type="button" class="icon-button" data-close-dialog aria-label="Close">×</button></div>
   <form method="post" class="profile-settings-form">{% csrf_token %}<input type="hidden" name="action" value="password">

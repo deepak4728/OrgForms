@@ -5,11 +5,13 @@ from django.contrib.auth import get_user_model, login, logout
 from django.contrib.auth.decorators import login_required
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.forms import PasswordChangeForm
+from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
 from django.db import transaction
-from accounts.models import UserPortfolio, PersonalDocument
+from accounts.models import AccountSpace, UserPortfolio, PersonalDocument
 from accounts.forms import AccountDetailsForm, RegistrationForm
 from orgforms.upload_validation import validate_private_document
 
@@ -21,8 +23,14 @@ def signup(request):
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"]
         User = get_user_model()
-        user = User.objects.create_user(username=email, email=email, password=form.cleaned_data["password1"])
+        with transaction.atomic():
+            user = User.objects.create_user(username=email, email=email, password=form.cleaned_data["password1"])
+            AccountSpace.objects.create(user=user, kind=form.cleaned_data["space"])
         login(request, user)
+        if form.cleaned_data["space"] == AccountSpace.ORGANIZATION_CREATE:
+            request.session["open_organization_setup"] = True
+        if form.cleaned_data["space"] == AccountSpace.PERSONAL:
+            return redirect(f"{reverse('organizations:dashboard')}?space=personal")
         return redirect("organizations:dashboard")
     return render(request, "accounts/signup.html", {"form": form})
 
@@ -36,12 +44,16 @@ def logout_view(request):
 
 @login_required
 def profile(request):
+    account_space = AccountSpace.objects.filter(user=request.user).first()
+    personal_features = not account_space or account_space.kind == AccountSpace.PERSONAL
     details_form = AccountDetailsForm(instance=request.user, prefix="details")
     password_form = PasswordChangeForm(request.user, prefix="password")
-    portfolio, _ = UserPortfolio.objects.get_or_create(user=request.user)
+    portfolio = UserPortfolio.objects.get_or_create(user=request.user)[0] if personal_features else None
     portfolio_error = ""
     if request.method == "POST":
         action = request.POST.get("action")
+        if not personal_features and action in {"portfolio", "upload-document", "delete-document"}:
+            raise PermissionDenied("Personal profiles require a personal account.")
         if action == "details":
             details_form = AccountDetailsForm(request.POST, instance=request.user, prefix="details")
             if details_form.is_valid():
@@ -96,14 +108,17 @@ def profile(request):
         "details_form": details_form,
         "password_form": password_form,
         "portfolio": portfolio,
-        "portfolio_json": request.POST.get("profile_data", json.dumps(portfolio.profile_data if isinstance(portfolio.profile_data, dict) else {}, ensure_ascii=False, indent=2)) if request.method == "POST" and request.POST.get("action") == "portfolio" else json.dumps(portfolio.profile_data if isinstance(portfolio.profile_data, dict) else {}, ensure_ascii=False, indent=2),
+        "portfolio_json": request.POST.get("profile_data", json.dumps(portfolio.profile_data if portfolio and isinstance(portfolio.profile_data, dict) else {}, ensure_ascii=False, indent=2)) if request.method == "POST" and request.POST.get("action") == "portfolio" else json.dumps(portfolio.profile_data if portfolio and isinstance(portfolio.profile_data, dict) else {}, ensure_ascii=False, indent=2),
         "portfolio_error": portfolio_error,
         "personal_documents": PersonalDocument.objects.filter(user=request.user),
+        "personal_features": personal_features,
     })
 
 
 @login_required
 def personal_document(request, document_id):
+    if AccountSpace.objects.filter(user=request.user).exclude(kind=AccountSpace.PERSONAL).exists():
+        raise PermissionDenied("Personal documents require a personal account.")
     document = get_object_or_404(PersonalDocument, pk=document_id, user=request.user)
     try:
         stream = document.file.open("rb")
@@ -118,6 +133,8 @@ def personal_document(request, document_id):
 def api_personal_portfolio(request):
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if AccountSpace.objects.filter(user=request.user).exclude(kind=AccountSpace.PERSONAL).exists():
+        raise PermissionDenied("Personal profiles require a personal account.")
     portfolio = UserPortfolio.objects.filter(user=request.user).first()
     if not portfolio or not portfolio.use_for_form_assistance:
         return JsonResponse({"enabled": False, "detail": "Enable profile use in your profile settings first."})

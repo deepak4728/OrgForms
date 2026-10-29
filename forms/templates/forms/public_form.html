@@ -1,16 +1,17 @@
 {% extends "base.html" %}
-{% block title %}{{ form.title }} · {{ organization.name }}{% endblock %}
+{% block title %}{{ revision.title }} · {{ organization.name }}{% endblock %}
 {% block content %}
 <section class="public-form surface">
-  <p class="eyebrow">{{ organization.name }}</p><h1>{{ form.title }}</h1><p class="lede">{{ form.description }}</p>
+  <p class="eyebrow">{{ organization.name }}</p><h1>{{ revision.title }}</h1><p class="lede">{{ revision.description }}</p>
   <p><span class="pill">{{ form.get_visibility_display }}</span></p>
-  <form id="dynamic-form">
+  {% if initial_record %}<p class="muted">Updating record {{ initial_record.id }} · version {{ initial_record.version }}. Saving also retains this collection response.</p>{% endif %}
+  <form id="dynamic-form" data-revision-id="{{ revision.pk }}">
     {% csrf_token %}
     <div class="field"><label for="quick-fill">Quick fill (optional)</label><textarea id="quick-fill" placeholder="Type details in one message, for example: name Rahul; email rahul@example.com; phone 9876543210"></textarea>{% if portfolio_assistance_enabled %}<label class="portfolio-opt-in"><input id="include-saved-profile" type="checkbox"> Include my saved profile details for suggestions</label>{% endif %}<button type="button" class="secondary" id="classify-fill">Suggest field values</button> <span id="classify-status" class="muted"></span><p class="muted">Suggestions stay editable. Please review them before submitting.</p></div>
     <div id="fields"></div>
-    <div class="field"><label>Name (optional)</label><input name="__orgforms_respondent_name"></div>
-    <div class="field"><label>Email (optional)</label><input name="__orgforms_respondent_email" type="email"></div>
-    <button type="submit">Submit response</button><p id="form-status" class="muted"></p>
+    <div class="field"><label for="respondent-name">Name (optional)</label><input id="respondent-name" name="__orgforms_respondent_name"></div>
+    <div class="field"><label for="respondent-email">Email (optional)</label><input id="respondent-email" name="__orgforms_respondent_email" type="email"></div>
+    <button type="submit">{% if initial_record %}Update record{% else %}Submit response{% endif %}</button><p id="form-status" class="muted"></p>
   </form>
   <section class="response-success" id="response-success" hidden tabindex="-1" aria-live="polite" aria-labelledby="response-success-title">
     <span class="response-success-mark" aria-hidden="true">✓</span>
@@ -24,7 +25,8 @@
     </div>
   </section>
 </section>
-{{ form.schema|json_script:"form-schema" }}
+{{ revision.schema|json_script:"form-schema" }}
+{{ initial_record|json_script:"initial-record" }}
 {{ menu_items|json_script:"catalog-items" }}
 {{ field_catalogs|json_script:"field-catalogs" }}
 <script>
@@ -32,12 +34,25 @@ const schema=JSON.parse(document.getElementById('form-schema').textContent);
 const fieldCatalogs=JSON.parse(document.getElementById("field-catalogs").textContent);
 const menu=JSON.parse(document.getElementById('catalog-items').textContent);
 const root=document.getElementById('fields');
+const initialRecord=JSON.parse(document.getElementById('initial-record').textContent);
+let linkedRecordVersion=initialRecord?.version;
 
 function updateConditions(){
-  for(const wrap of root.querySelectorAll('[data-when-field]')){
-    const dependency=root.querySelector(`[name="${CSS.escape(wrap.dataset.whenField)}"]`);
-    const value=dependency?.type==='checkbox'?String(dependency.checked):dependency?.value;
-    wrap.hidden=String(value)!==wrap.dataset.whenEquals;
+  const byId=new Map(schema.fields.map(field=>[field.id,field]));
+  function visible(field){
+    if(!field.visibleWhen)return true;
+    const parent=byId.get(field.visibleWhen.field);
+    if(!parent||!visible(parent))return false;
+    const input=root.querySelector(`[name="${CSS.escape(parent.id)}"]`);
+    const value=input?.type==='checkbox'?input.checked:input?.value;
+    const expected=field.visibleWhen.equals;
+    if(['number','rating'].includes(parent.type))return value!==''&&value!==undefined&&Number.isFinite(Number(value))&&Number(value)===Number(expected);
+    return value===expected;
+  }
+  for(const field of schema.fields){
+    const wrap=root.querySelector(`[data-field-id="${CSS.escape(field.id)}"]`);
+    if(!wrap)continue;
+    wrap.hidden=!visible(field);
     for(const input of wrap.querySelectorAll('input,select,textarea'))input.required=!wrap.hidden&&input.dataset.formRequired==='true';
   }
 }
@@ -45,10 +60,12 @@ function updateConditions(){
 function renderFields(){
   root.innerHTML='';
   for(const field of schema.fields){
-    const wrap=document.createElement('div');wrap.className='field';
+    const wrap=document.createElement('div');wrap.className='field';wrap.dataset.fieldId=field.id;
+    const wide=['textarea','file','item_cards'].includes(field.type); wrap.dataset.layoutWidth=wide?'full':(field.max_length&&field.max_length<=24?'third':'half');
     if(field.visibleWhen){wrap.dataset.whenField=field.visibleWhen.field;wrap.dataset.whenEquals=field.visibleWhen.equals}
-    const label=document.createElement('label');label.textContent=field.label+(field.required?' *':'');wrap.append(label);
+    const label=document.createElement('label');label.htmlFor=`field-${field.id}`;label.id=`field-label-${field.id}`;label.textContent=field.label+(field.required?' *':'');wrap.append(label);
     if(field.type==='item_cards'){
+      wrap.setAttribute('role','group');wrap.setAttribute('aria-labelledby',label.id);
       for(const item of menu.filter(item=>item.catalog_id===fieldCatalogs[field.id])){
         const row=document.createElement('div');row.className='menu-item-card';
         const name=document.createElement('span');name.className='menu-item-name';name.textContent=`${item.name} · ₹${item.price}`;
@@ -59,15 +76,20 @@ function renderFields(){
       wrap.dataset.itemCards=field.id;root.append(wrap);continue;
     }
     let input;
-    if(['select','radio'].includes(field.type)){
+    if(field.type==='record_reference'){
+      input=document.createElement('select');input.append(new Option('Choose a record',''));
+      const selected=initialRecord?.data[field.id];if(selected)input.append(new Option(selected,selected));
+      fetch(`/api/datasets/${encodeURIComponent(field.dataset_id)}/lookup/`).then(async response=>{if(!response.ok)throw Error('Lookup access is required to choose a record.');return response.json()}).then(result=>{for(const row of result.results){const old=Array.from(input.options).find(option=>option.value===row.id);if(old)old.textContent=row.label;else input.append(new Option(row.label,row.id))}if(selected)input.value=selected}).catch(error=>{const hint=document.createElement('small');hint.textContent=error.message;wrap.append(hint)});
+    }else if(['select','radio'].includes(field.type)){
       input=document.createElement('select');
       if(field.required){const empty=document.createElement('option');empty.value='';empty.textContent='Choose an option';input.append(empty)}
       for(const optionValue of field.options||[]){const option=document.createElement('option');option.value=optionValue;option.textContent=optionValue;input.append(option)}
     }else if(field.type==='textarea')input=document.createElement('textarea');
     else if(field.type==='checkbox'){input=document.createElement('input');input.type='checkbox'}
     else{input=document.createElement('input');input.type=field.type==='tel'?'tel':field.type==='rating'?'number':field.type;if(field.type==='file')input.accept='.pdf,.docx,.jpg,.jpeg,.png,.webp';if(field.min!==undefined)input.min=field.min;if(field.max!==undefined)input.max=field.max}
-    input.name=field.id;input.dataset.formRequired=String(!!field.required);if(field.placeholder)input.placeholder=field.placeholder;
-    input.addEventListener('change',updateConditions);wrap.append(input);if(field.type==='file'){const hint=document.createElement('small');hint.className='field-hint';hint.textContent='PDF, Word document, or image · up to 10 MB';wrap.append(hint)}root.append(wrap);
+    if(field.max_length&&['text','textarea','email','tel'].includes(field.type))input.maxLength=field.max_length;
+    input.name=field.id;input.id=`field-${field.id}`;input.dataset.formRequired=String(!!field.required);if(field.placeholder)input.placeholder=field.placeholder;
+    if(initialRecord&&Object.hasOwn(initialRecord.data,field.id)){if(input.type==='checkbox')input.checked=!!initialRecord.data[field.id];else input.value=initialRecord.data[field.id]}input.addEventListener('change',updateConditions);wrap.append(input);if(field.type==='file'){const hint=document.createElement('small');hint.className='field-hint';hint.textContent='PDF, Word document, or image · up to 10 MB';wrap.append(hint)}root.append(wrap);
   }
   updateConditions();
 }
@@ -101,7 +123,11 @@ const dynamicForm=document.getElementById('dynamic-form');
 const responseSuccess=document.getElementById('response-success');
 const responseSuccessMessage=document.getElementById('response-success-message');
 const editResponseButton=document.getElementById('edit-response');
+if(initialRecord)document.getElementById('submit-another-response').hidden=true;
 let responseEditToken='';
+let responseVersion=1;
+let captureRequestId='',captureSignature='';
+function newRequestId(){return crypto.randomUUID?crypto.randomUUID():Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('')}
 
 editResponseButton.addEventListener('click',()=>{
   responseSuccess.hidden=true;dynamicForm.hidden=false;
@@ -111,7 +137,7 @@ editResponseButton.addEventListener('click',()=>{
 });
 document.getElementById('submit-another-response').addEventListener('click',()=>{
   dynamicForm.reset();updateConditions();
-  responseEditToken='';
+  responseEditToken='';responseVersion=1;linkedRecordVersion=undefined;captureRequestId='';captureSignature='';
   dynamicForm.querySelector('[type="submit"]').textContent='Submit response';
   document.getElementById('form-status').textContent='';
   document.getElementById('classify-status').textContent='';
@@ -132,12 +158,15 @@ dynamicForm.addEventListener('submit',async event=>{
   status.textContent='Submitting…';submitButton.disabled=true;
   const editing=Boolean(responseEditToken);
   try{
-    const body=new FormData();body.append('data',JSON.stringify(data));body.append('respondent_name',formElement.elements.__orgforms_respondent_name.value);body.append('respondent_email',formElement.elements.__orgforms_respondent_email.value);if(responseEditToken)body.append('edit_token',responseEditToken);for(const field of schema.fields){if(field.type==='file'){const input=formElement.elements[field.id];if(input?.files?.[0])body.append(field.id,input.files[0])}}
+    const body=new FormData();body.append('data',JSON.stringify(data));body.append('revision_id',dynamicForm.dataset.revisionId);if(responseEditToken)body.append('expected_version',String(responseVersion));body.append('respondent_name',formElement.elements.__orgforms_respondent_name.value);body.append('respondent_email',formElement.elements.__orgforms_respondent_email.value);if(responseEditToken)body.append('edit_token',responseEditToken);for(const field of schema.fields){if(field.type==='file'){const input=formElement.elements[field.id];if(input?.files?.[0])body.append(field.id,input.files[0])}}
+    if(initialRecord)body.append('record_id',initialRecord.id);if(linkedRecordVersion)body.append('record_version',String(linkedRecordVersion));
+    const signature=JSON.stringify(Array.from(body.entries()).map(([key,value])=>[key,value instanceof File?{name:value.name,size:value.size,lastModified:value.lastModified}:value]));
+    if(!captureRequestId||captureSignature!==signature){captureRequestId=newRequestId();captureSignature=signature}body.append('request_id',captureRequestId);
     const response=await fetch(location.href,{method:'POST',headers:{'X-CSRFToken':document.querySelector('[name=csrfmiddlewaretoken]').value},body});
     const result=await response.json().catch(()=>({errors:{detail:'Unable to submit. Reload this page and try again.'}}));
     if(response.ok){
-      responseEditToken=result.edit_token||responseEditToken;
-      responseSuccessMessage.textContent=editing?'Your changes have been saved.':'Your response has been submitted.';
+      responseEditToken=result.edit_token||'';responseVersion=result.version;linkedRecordVersion=result.record_version;captureRequestId='';captureSignature='';
+      responseSuccessMessage.textContent=editing?'Your changes have been saved.':initialRecord?'The record has been updated and your response saved.':'Your response has been submitted.';
       editResponseButton.hidden=!(result.can_edit&&responseEditToken);
       formElement.hidden=true;responseSuccess.hidden=false;responseSuccess.focus();
       formElement.querySelector('[type="submit"]').textContent='Submit response';

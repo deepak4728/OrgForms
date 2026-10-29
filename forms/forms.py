@@ -3,11 +3,18 @@ from django.core.validators import validate_email
 from django import forms
 from django.contrib.auth import get_user_model
 from forms.models import DynamicForm
+from organizations.models import Department
 
 
 class FormAccessSettingsForm(forms.Form):
     visibility = forms.ChoiceField(choices=DynamicForm.VISIBILITY_CHOICES)
     access_emails = forms.CharField(required=False, widget=forms.Textarea)
+    access_departments = forms.ModelMultipleChoiceField(queryset=Department.objects.none(), required=False, widget=forms.CheckboxSelectMultiple, label="Departments")
+
+    def __init__(self, *args, organization=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if organization is not None:
+            self.fields['access_departments'].queryset = organization.departments.all()
 
     def clean(self):
         cleaned = super().clean()
@@ -15,8 +22,8 @@ class FormAccessSettingsForm(forms.Form):
         self.allowed_accounts = []
         if cleaned.get("visibility") != DynamicForm.VISIBILITY_RESTRICTED:
             return cleaned
-        if not emails:
-            self.add_error("access_emails", "Add at least one account email for a restricted form.")
+        if not emails and not cleaned.get("access_departments"):
+            self.add_error("access_emails", "Choose at least one account or department for a restricted form.")
             return cleaned
         if len(emails) > 100:
             self.add_error("access_emails", "Share with up to 100 accounts at a time.")

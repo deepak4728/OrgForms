@@ -1,6 +1,8 @@
 import uuid
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
+from django.core.exceptions import ValidationError
+from django.db.models import F, Q
 from django.utils.text import slugify
 from decimal import Decimal
 
@@ -26,34 +28,61 @@ class DynamicForm(models.Model):
     description = models.TextField(blank=True, default="")
     purpose = models.CharField(max_length=120, blank=True, default="")
     schema = models.JSONField(default=dict)
+    destination_schema = models.ForeignKey("datasets.DatasetSchemaVersion", null=True, blank=True, on_delete=models.PROTECT, related_name="collections")
+    field_mapping = models.JSONField(default=dict, blank=True)
+    response_limit = models.PositiveIntegerField(null=True, blank=True)
+    capture_sequence = models.PositiveBigIntegerField(default=0, editable=False)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_DRAFT)
     visibility = models.CharField(max_length=16, choices=VISIBILITY_CHOICES, default=VISIBILITY_ORGANIZATION)
     allowed_users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="shared_orgforms")
-    allowed_groups = models.ManyToManyField("organizations.OrganizationGroup", blank=True, related_name="forms")
+    allowed_departments = models.ManyToManyField("organizations.Department", blank=True, related_name="accessible_forms")
     editors = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="editable_orgforms")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=("organization", "slug"), name="unique_form_slug_per_org")]
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "slug"), name="unique_form_slug_per_org"),
+            models.CheckConstraint(condition=Q(response_limit__isnull=True) | Q(response_limit__gte=1), name="positive_response_limit"),
+        ]
         ordering = ("-updated_at",)
 
     def save(self, *args, **kwargs):
         from .services import normalize_schema
-        if self.schema:
-            self.schema = normalize_schema(self.schema, self.organization)
-        if not self.slug:
-            base = slugify(self.title)[:150] or "form"
-            if base in {"settings", "people", "menu", "submissions", "forms"}:
-                base += "-form"
-            candidate = base
-            counter = 2
-            while DynamicForm.objects.filter(organization=self.organization, slug=candidate).exclude(pk=self.pk).exists():
-                candidate = f"{base}-{counter}"
-                counter += 1
-            self.slug = candidate
-        super().save(*args, **kwargs)
+        from .capture import publish_revision
+        with transaction.atomic():
+            if not self._state.adding:
+                # A first write serializes publication/capture on SQLite too.
+                type(self).objects.filter(pk=self.pk).update(capture_sequence=F("capture_sequence") + 1)
+                expected = getattr(self, "_expected_revision", None)
+                current = self.current_revision
+                if expected and (current is None or str(current.pk) != str(expected)):
+                    raise ValidationError("This form changed in another window. Reload before saving.")
+                previous = type(self).objects.get(pk=self.pk)
+                self.capture_sequence = previous.capture_sequence
+                if previous.organization_id != self.organization_id and self.submissions.exists():
+                    raise ValidationError("Archive or duplicate a form with responses instead of moving it to another organization.")
+            if self.schema:
+                self.schema = normalize_schema(self.schema, self.organization)
+            from datasets.services import validate_binding
+            validate_binding(self)
+            if not self.slug:
+                base = slugify(self.title)[:150] or "form"
+                if base in {"settings", "people", "menu", "submissions", "forms", "data"}:
+                    base += "-form"
+                candidate, counter = base, 2
+                while type(self).objects.filter(organization=self.organization, slug=candidate).exclude(pk=self.pk).exists():
+                    candidate = f"{base}-{counter}"
+                    counter += 1
+                self.slug = candidate
+            super().save(*args, **kwargs)
+            # Read saved values even when update_fields excludes schema.
+            publish_revision(type(self).objects.get(pk=self.pk), actor=getattr(self, "_revision_actor", None))
+
+    @property
+    def current_revision(self):
+        return self.revisions.order_by("-number").first()
 
     def __str__(self):
         return self.title
@@ -74,6 +103,10 @@ class FormSubmission(models.Model):
     form = models.ForeignKey(DynamicForm, on_delete=models.PROTECT, related_name="submissions")
     organization = models.ForeignKey("organizations.Organization", on_delete=models.CASCADE, related_name="submissions")
     data = models.JSONField(default=dict)
+    collection_revision = models.ForeignKey("CollectionRevision", on_delete=models.PROTECT, related_name="submissions")
+    version = models.PositiveIntegerField(default=1)
+    record = models.ForeignKey("datasets.Record", null=True, blank=True, on_delete=models.PROTECT, related_name="submissions")
+    record_version = models.PositiveIntegerField(null=True, blank=True)
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_SUBMITTED)
     submitted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     respondent_name = models.CharField(max_length=200, blank=True, default="")
@@ -84,12 +117,106 @@ class FormSubmission(models.Model):
         ordering = ("-created_at",)
         indexes = [models.Index(fields=("organization", "created_at"))]
 
+    def save(self, *args, **kwargs):
+        if self.organization_id != self.form.organization_id:
+            raise ValidationError("The submission must belong to its form's organization.")
+        if self.collection_revision_id is None:
+            self.collection_revision = self.form.current_revision
+        if self.collection_revision_id and self.collection_revision.form_id != self.form_id:
+            raise ValidationError("The collection revision belongs to another form.")
+        if self.record_id and self.record.dataset.organization_id != self.organization_id:
+            raise ValidationError("The linked record belongs to another organization.")
+        super().save(*args, **kwargs)
+
+    @property
+    def current_attachments(self):
+        return self.attachments.filter(is_current=True)
+
+
+class ImmutableQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("Published revisions are immutable.")
+
+    def delete(self):
+        raise ValidationError("Published revisions are immutable.")
+
+
+class ImmutableRevision(models.Model):
+    objects = ImmutableQuerySet.as_manager()
+
+    class Meta:
+        abstract = True
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError("Published revisions are immutable.")
+        kwargs["force_insert"] = True
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Published revisions are immutable.")
+
+
+class CollectionRevision(ImmutableRevision):
+    """A definition snapshot; current grants and limits are always checked live."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    form = models.ForeignKey(DynamicForm, on_delete=models.CASCADE, related_name="revisions")
+    number = models.PositiveIntegerField()
+    schema_dialect = models.CharField(max_length=40, default="orgforms-fields-v1")
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default="")
+    purpose = models.CharField(max_length=120, blank=True, default="")
+    schema = models.JSONField(default=dict)
+    destination_schema = models.ForeignKey("datasets.DatasetSchemaVersion", null=True, blank=True, on_delete=models.PROTECT, related_name="collection_revisions")
+    field_mapping = models.JSONField(default=dict, blank=True)
+    is_legacy_baseline = models.BooleanField(default=False)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-number",)
+        constraints = [models.UniqueConstraint(fields=("form", "number"), name="unique_collection_revision")]
+
+
+class SubmissionRevision(ImmutableRevision):
+    submission = models.ForeignKey(FormSubmission, on_delete=models.CASCADE, related_name="revisions")
+    number = models.PositiveIntegerField()
+    data = models.JSONField(default=dict)
+    respondent_name = models.CharField(max_length=200, blank=True, default="")
+    respondent_email = models.CharField(max_length=254, blank=True, default="")
+    status = models.CharField(max_length=16)
+    attachments = models.JSONField(default=list)
+    item_selections = models.JSONField(default=list)
+    record_snapshot = models.JSONField(default=dict)
+    event = models.CharField(max_length=24)
+    source = models.CharField(max_length=24)
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-number",)
+        constraints = [models.UniqueConstraint(fields=("submission", "number"), name="unique_submission_revision")]
+
+
+class CaptureReceipt(models.Model):
+    form = models.ForeignKey(DynamicForm, on_delete=models.CASCADE, related_name="capture_receipts")
+    submission = models.ForeignKey(FormSubmission, on_delete=models.CASCADE, related_name="capture_receipts")
+    owner_hash = models.CharField(max_length=64)
+    key = models.CharField(max_length=128)
+    payload_hash = models.CharField(max_length=64)
+    response = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("form", "owner_hash", "key"), name="unique_capture_receipt")]
+
 
 class SubmissionAttachment(models.Model):
     submission = models.ForeignKey(FormSubmission, on_delete=models.CASCADE, related_name="attachments")
     field_id = models.CharField(max_length=80)
     file = models.FileField(upload_to="submission-files/%Y/%m/")
     original_name = models.CharField(max_length=255)
+    is_current = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

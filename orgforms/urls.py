@@ -8,5 +8,6 @@ urlpatterns = [
     path("", include("organizations.urls")),
     path("", include("chat.urls")),
     path("", include("ai_gateway.urls")),
+    path("", include("datasets.urls")),
     path("", include("forms.urls")),
 ]

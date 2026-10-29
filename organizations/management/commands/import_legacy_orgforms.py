@@ -6,6 +6,8 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
+from django.apps import apps
+from forms.legacy_history import seed_revision_baselines_v1
 
 # Source model names are deliberately confined to this one-time transition tool.
 TABLES = {
@@ -16,8 +18,6 @@ TABLES = {
     'organizations_organization': 'organizations_organization',
     'organizations_organizationmembership': 'organizations_organizationmembership',
     'organizations_organizationdocument': 'organizations_organizationdocument',
-    'organizations_organizationgroup': 'organizations_organizationgroup',
-    'organizations_organizationgroup_members': 'organizations_organizationgroup_members',
     'accounts_userportfolio': 'organizations_userportfolio',
     'accounts_personaldocument': 'organizations_personaldocument',
     'ai_gateway_aiconfiguration': 'api_businessprofile',
@@ -26,7 +26,6 @@ TABLES = {
     'forms_catalogitem': 'api_menuitem',
     'forms_dynamicform': 'organizations_dynamicform',
     'forms_dynamicform_allowed_users': 'organizations_dynamicform_allowed_users',
-    'forms_dynamicform_allowed_groups': 'organizations_dynamicform_allowed_groups',
     'forms_dynamicform_editors': 'organizations_dynamicform_editors',
     'forms_formsubmission': 'organizations_formsubmission',
     'forms_submissionattachment': 'organizations_submissionattachment',
@@ -70,13 +69,15 @@ class Command(BaseCommand):
                 raise CommandError('The source database failed its integrity check.')
             if source.execute('PRAGMA foreign_key_check').fetchall():
                 raise CommandError('The source database has broken foreign keys.')
-            for table in TABLES:
+            for table in (*TABLES, 'forms_collectionrevision', 'forms_submissionrevision', 'forms_capturereceipt', 'organizations_department', 'organizations_staffassignment', 'forms_dynamicform_allowed_departments'):
                 if target.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]:
                     raise CommandError(f'{table} is not empty. Import into a fresh database.')
             tables = {row[0] for row in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            required = set(TABLES.values())
+            required = set(TABLES.values()) | {'organizations_organizationgroup', 'organizations_organizationgroup_members', 'organizations_dynamicform_allowed_groups'}
             if required - tables:
                 raise CommandError(f'Source schema is missing tables: {sorted(required - tables)}')
+            if source.execute('SELECT 1 FROM organizations_organizationmembership GROUP BY user_id HAVING COUNT(*) > 1 LIMIT 1').fetchone():
+                raise CommandError('The source contains accounts in multiple organizations. Resolve memberships in a copy before importing; the source is unchanged.')
             catalogs = {r['organization_id']: r['id'] for r in source.execute('SELECT * FROM api_businessprofile') if r['organization_id'] is not None}
             forms = {r['id']: dict(r) for r in source.execute('SELECT * FROM organizations_dynamicform')}
             links = {}
@@ -106,6 +107,8 @@ class Command(BaseCommand):
                     if table == 'forms_itemselection':
                         values['submission_id'], values['field_id'] = links.get(values['id'], (None, ''))
                     if table == 'forms_dynamicform':
+                        values.update(capture_sequence=0, response_limit=None)
+                        values.update(destination_schema_id=None, field_mapping='{}')
                         schema = json.loads(values['schema'])
                         for field in schema.get('fields', []):
                             if field.get('type') == 'item_cards':
@@ -116,11 +119,24 @@ class Command(BaseCommand):
                                     catalogs[values['organization_id']] = catalog_id
                                 field['catalog_id'] = catalog_id
                         values['schema'] = json.dumps(schema)
+                    if table == 'forms_formsubmission':
+                        from forms.models import CollectionRevision
+                        definition = CollectionRevision.objects.get(form_id=values['form_id'], number=1)
+                        values.update(collection_revision_id=definition.pk.hex, version=1, record_id=None, record_version=None)
+                    if table == 'chat_chatconversation':
+                        values.update(account_id=None, context_summary='', compacted_message_count=0)
+                    if table == 'forms_submissionattachment':
+                        values['is_current'] = True
                     missing = set(columns) - values.keys()
                     if missing:
                         raise CommandError(f'Missing import fields in {table}: {missing}')
                     target.execute(f'INSERT INTO "{table}" ({",".join(chr(34)+c+chr(34) for c in columns)}) VALUES ({",".join("?" for _ in columns)})', [values[c] for c in columns])
                 counts[table] = len(rows)
+                if table == 'forms_dynamicform':
+                    seed_revision_baselines_v1(apps)
+            seed_revision_baselines_v1(apps)
+            target.execute("INSERT INTO accounts_accountspace (user_id, kind) SELECT id, CASE WHEN EXISTS (SELECT 1 FROM organizations_organizationmembership m WHERE m.user_id=auth_user.id) THEN 'organization_join' ELSE 'personal' END FROM auth_user")
+            self._import_departments(source, target)
             self._permissions(source, target)
             # Verify exact copied values, except intentional schema/field transformations.
             for table, count in counts.items():
@@ -148,6 +164,22 @@ class Command(BaseCommand):
             raise
         finally:
             source.close()
+
+    def _import_departments(self, source, target):
+        """Convert legacy groups without merging different permission sets."""
+        for group in source.execute('SELECT * FROM organizations_organizationgroup'):
+            base = (group['name'] or group['alias'] or 'Team').strip() or 'Team'
+            name, counter = base[:100], 2
+            while target.execute('SELECT 1 FROM organizations_department WHERE organization_id=? AND lower(name)=lower(?)', (group['organization_id'], name)).fetchone():
+                suffix = f' ({counter})'
+                name, counter = base[:100-len(suffix)] + suffix, counter + 1
+            department = target.execute('INSERT INTO organizations_department (organization_id,name,description,is_archived,created_at,updated_at) VALUES (?,?,?,0,?,?)', (group['organization_id'], name, '', group['created_at'], group['created_at'])).lastrowid
+            for member in source.execute('SELECT user_id FROM organizations_organizationgroup_members WHERE organizationgroup_id=?', (group['id'],)):
+                membership = target.execute('SELECT id FROM organizations_organizationmembership WHERE organization_id=? AND user_id=?', (group['organization_id'], member['user_id'])).fetchone()
+                if membership:
+                    target.execute('INSERT INTO organizations_staffassignment (department_id,membership_id,created_at) VALUES (?,?,?)', (department, membership[0], group['created_at']))
+            for grant in source.execute('SELECT dynamicform_id FROM organizations_dynamicform_allowed_groups WHERE organizationgroup_id=?', (group['id'],)):
+                target.execute('INSERT INTO forms_dynamicform_allowed_departments (dynamicform_id,department_id) VALUES (?,?)', (grant['dynamicform_id'], department))
 
     def _permissions(self, source, target):
         types = {r[0]: (r[1], r[2]) for r in source.execute('SELECT id,app_label,model FROM django_content_type')}

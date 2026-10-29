@@ -8,6 +8,7 @@ from django.test import AsyncClient, override_settings
 from rest_framework.test import APITestCase
 from ai_gateway.models import AIConfiguration
 from chat.models import ChatConversation, ChatMemory, ChatMemoryPreference, ChatMessage
+from organizations.models import Organization, OrganizationMembership
 
 
 @override_settings(
@@ -19,6 +20,8 @@ class OllamaAPITests(APITestCase):
             username="chat-user", password="test-password-123"
         )
         self.client.force_login(self.user)
+        organization = Organization.objects.create(name="Local model workspace")
+        OrganizationMembership.objects.create(organization=organization, user=self.user, role="admin")
 
     def test_public_home_loads_without_api_key_configuration(self):
         self.client.logout()
@@ -46,7 +49,8 @@ class OllamaAPITests(APITestCase):
         response = self.client.get("/api/models/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, {"models": [{"name": "test-model"}]})
+        self.assertEqual(response.data["models"], [{"name": "test-model"}])
+        self.assertEqual(response.data["default_model"], "test-model")
         get_models.assert_called_once_with()
 
     def test_chat_requires_messages(self):
@@ -580,6 +584,8 @@ class CloudProviderAPITests(APITestCase):
             username="cloud-user", password="test-password-123"
         )
         self.client.force_login(user)
+        organization = Organization.objects.create(name="Cloud model workspace")
+        OrganizationMembership.objects.create(organization=organization, user=user, role="admin")
         self.profile = AIConfiguration.get_or_create_default()
         self.profile.preferred_provider = AIConfiguration.PROVIDER_CLOUD
         self.profile.cloud_provider = "openai-compatible"
@@ -627,3 +633,37 @@ class CloudProviderAPITests(APITestCase):
 
         self.assertEqual(response.status_code, 503)
         self.assertIn("Set CLOUD_API_KEY", response.data["detail"])
+
+
+class DiscoveredModelChatTests(APITestCase):
+    def setUp(self):
+        user=get_user_model().objects.create_user('discovered-model-user')
+        self.client.force_login(user)
+        self.org=Organization.objects.create(name='Discovered models')
+        OrganizationMembership.objects.create(organization=self.org,user=user,role='manager')
+
+    @patch('chat.views.open_model_response')
+    def test_think_setting_is_forwarded_without_a_saved_model_profile(self,upstream):
+        for enabled in (False,True):
+            upstream.return_value=BytesIO(b'{"message":{"content":"Connection working."},"done":true}\n')
+            response=self.client.post('/api/chat/',{'organization_slug':self.org.slug,'temporary':True,'model':'qwen3.5:0.8b','messages':[{'role':'user','content':'Hello'}],'model_options':{'context_window':4096,'think':enabled},'context_options':{'conversation_history':False,'organization':False,'organization_profile':False,'documents':False,'saved_memory':False}},format='json')
+            self.assertEqual(response.status_code,200)
+            self.assertIn(b'Connection working.',b''.join(response.streaming_content))
+            self.assertEqual(upstream.call_args.args[1]['think'],enabled)
+        self.assertFalse(ChatMessage.objects.exists())
+
+    @patch('chat.views.open_model_response')
+    def test_explicit_context_window_reaches_ollama(self,upstream):
+        upstream.return_value=BytesIO(b'{"message":{"content":"Ready"},"done":true}\n')
+        response=self.client.post('/api/chat/',{'organization_slug':self.org.slug,'temporary':True,'model':'qwen3.5:0.8b','messages':[{'role':'user','content':'Hello'}],'model_options':{'context_window':8192,'think':False}},format='json')
+        self.assertEqual(response.status_code,200);b''.join(response.streaming_content)
+        self.assertEqual(upstream.call_args.args[1]['options']['num_ctx'],8192)
+
+    @patch('chat.views.open_model_response')
+    def test_suggestion_instruction_survives_history_disabled_without_saved_memory(self,upstream):
+        upstream.return_value=BytesIO(b'{"message":{"content":"[\\"One?\\",\\"Two?\\",\\"Three?\\"]"},"done":true}\n')
+        instruction='Create exactly three short questions. Return only a JSON array of three strings.'
+        response=self.client.post('/api/chat/',{'organization_slug':self.org.slug,'temporary':True,'model':'qwen3.5:0.8b','messages':[{'role':'user','content':instruction}],'context_options':{'conversation_history':False,'organization':False,'organization_profile':False,'documents':False,'saved_memory':True}},format='json')
+        self.assertEqual(response.status_code,200);b''.join(response.streaming_content)
+        self.assertEqual(upstream.call_args.args[1]['messages'],[{'role':'user','content':instruction}])
+        self.assertFalse(ChatMessage.objects.exists())

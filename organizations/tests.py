@@ -83,13 +83,14 @@ class OrganizationFormTests(TestCase):
 
     def test_admin_can_assign_organization_roles(self):
         self.client.force_login(self.owner)
+        new_member = get_user_model().objects.create_user(username="available@example.com", email="available@example.com")
         response = self.client.post(
             reverse("organizations:detail", args=(self.org.slug,)),
-            {"email": self.other.email, "role": OrganizationMembership.ROLE_MANAGER},
+            {"email": new_member.email, "role": OrganizationMembership.ROLE_MANAGER},
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
-            OrganizationMembership.objects.get(organization=self.org, user=self.other).role,
+            OrganizationMembership.objects.get(organization=self.org, user=new_member).role,
             OrganizationMembership.ROLE_MANAGER,
         )
 
@@ -225,3 +226,25 @@ class OrganizationFormTests(TestCase):
             HTTP_X_ORGANIZATION=self.other_org.slug,
         )
         self.assertEqual(response.status_code, 404)
+
+
+class OrganizationCreationMembersTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.owner = user_model.objects.create_user(username="wizard-owner@example.com", email="wizard-owner@example.com", password="test-pass-123")
+        self.member = user_model.objects.create_user(username="wizard-member@example.com", email="wizard-member@example.com", password="test-pass-123")
+        self.client.force_login(self.owner)
+
+    def test_creation_adds_existing_members_once_with_selected_role(self):
+        response = self.client.post(reverse("organizations:dashboard"), {"name": "Wizard Team", "member_emails": "wizard-member@example.com, WIZARD-MEMBER@example.com", "member_role": "manager"})
+        self.assertEqual(response.status_code, 302)
+        organization = Organization.objects.get(name="Wizard Team")
+        self.assertEqual(organization.memberships.get(user=self.member).role, OrganizationMembership.ROLE_MANAGER)
+        self.assertEqual(organization.memberships.get(user=self.owner).role, OrganizationMembership.ROLE_ADMIN)
+        self.assertEqual(organization.memberships.count(), 2)
+
+    def test_unknown_member_does_not_create_partial_organization(self):
+        response = self.client.post(reverse("organizations:dashboard"), {"name": "Unfinished Team", "member_emails": "missing@example.com", "member_role": "member"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "does not have an OrgForms account yet")
+        self.assertFalse(Organization.objects.filter(name="Unfinished Team").exists())

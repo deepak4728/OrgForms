@@ -80,6 +80,7 @@ def clean_profile_data(raw_data, business_type):
     if not isinstance(raw_data, dict):
         return {}
     allowed = {field["key"] for field in ORGANIZATION_PROFILE_LIBRARY.get(business_type, ORGANIZATION_PROFILE_LIBRARY["generic"])}
+    allowed.add("address")
     if business_type == "generic":
         allowed.add("custom_category")
     return {

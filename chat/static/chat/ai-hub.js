@@ -18,13 +18,15 @@
   const status = document.querySelector("#ai-chat-status");
   const csrf = document.querySelector('[name="csrfmiddlewaretoken"]')?.value || "";
   const modelSelect = document.querySelector("#ai-model-select");
-  const modelFamilyList = document.querySelector("#ai-model-family-list");
+  const modelList = document.querySelector("#ai-model-list");
   const modelDefaultChoice = document.querySelector("#ai-model-default-choice");
   const modelLabel = document.querySelector("#ai-model-label");
   const modelTriggerLabel = document.querySelector("#ai-model-trigger-label");
   const modelTriggerSpeed = document.querySelector("#ai-model-trigger-speed");
   const modelSelector = document.querySelector("#ai-model-selector");
   const modelGuide = document.querySelector(".ai-model-guide");
+  const contextWindowSelect = document.querySelector("#ai-context-window");
+  let defaultModelName = "", contextWindowLimit = 4096;
   const thinkToggle = document.querySelector("#ai-think-toggle");
   const thinkControl = document.querySelector("#ai-think-control");
   const temporaryToggle = document.querySelector("#ai-temporary-toggle");
@@ -55,6 +57,21 @@
   let savedMemoryCount = 0;
   let messages = [];
   let conversationId = null;
+  let selectingChats = false, selectedChats = new Set(), pendingDelete = [], menuChat = null, menuAnchor = null;
+  const historySelect = document.querySelector("#ai-history-select");
+  const historyBulk = document.querySelector("#ai-history-bulk");
+  const historyDelete = document.querySelector("#ai-history-delete");
+  const historyMenu = document.querySelector("#ai-history-menu");
+  const deleteDialog = document.querySelector("#ai-delete-dialog");
+  let compactedCount = 0, compactSummary = "";
+  let accountMemoryRevision = 0, accountMemoryDirty = false;
+  const compactButton = document.querySelector("#ai-compact-context");
+  const compactNote = document.querySelector("#ai-compact-note");
+  const accountMemoryUse = document.querySelector("#ai-account-memory-use");
+  const accountMemoryAuto = document.querySelector("#ai-account-memory-auto");
+  const accountMemoryContent = document.querySelector("#ai-account-memory-content");
+  const accountMemoryStatus = document.querySelector("#ai-account-memory-status");
+  const accountMemorySave = document.querySelector("#ai-account-memory-save");
   let busy = false;
   let activeRequestController = null;
   let modelOptions = [];
@@ -120,6 +137,7 @@
     if (contextToggles.organization_profile.checked) selected.push("Org info");
     if (contextToggles.documents.checked) selected.push("Docs");
     if (contextToggles.saved_memory.checked && !temporaryMode) selected.push("Memory");
+    if (accountMemoryUse.checked && !temporaryMode) selected.push("Account");
     if (profileToggle.checked) selected.push("My profile");
     contextSummary.textContent = selected.join(" · ") || "None";
   }
@@ -218,7 +236,7 @@
   }
 
   function populateModelSelect() {
-    modelSelect.replaceChildren(new Option("Organization default", ""));
+    modelSelect.replaceChildren(new Option("Default", ""));
     for (const model of modelOptions) {
       const benchmark = benchmarkFor(model.name);
       const label = benchmark ? `${model.name} · ${Number(benchmark.tokens_per_second).toFixed(1)} tok/s` : model.name;
@@ -236,89 +254,40 @@
       .replace(/^([a-z])/, (match) => match.toUpperCase());
   }
 
-  function modelFamily(name) {
-    const knownFamily = name.match(/^(llama|gemma|qwen)/i)?.[1];
-    if (knownFamily) return knownFamily[0].toUpperCase() + knownFamily.slice(1).toLowerCase();
-    const baseName = name.split(/[:\s]/, 1)[0];
-    return baseName ? baseName[0].toUpperCase() + baseName.slice(1) : "Other";
-  }
-
   function renderModelMenu() {
     const selectedName = modelSelect.value;
-    const selectedModel = modelOptions.find((item) => item.name === selectedName);
     modelDefaultChoice.setAttribute("aria-pressed", String(!selectedName));
-    modelFamilyList.replaceChildren();
+    modelList.replaceChildren();
     thinkControl.hidden = true;
     document.querySelector("#ai-model-selector-popover").append(thinkControl);
-
-    const groups = new Map();
-    modelChoices.forEach((model) => {
-      const family = modelFamily(model.name);
-      if (!groups.has(family)) groups.set(family, []);
-      groups.get(family).push(model);
-    });
-
-    for (const [family, models] of groups) {
-      const familyItem = document.createElement("div");
-      familyItem.className = "ai-model-family";
-      const activeModel = models.find((model) => model.name === selectedName);
-      familyItem.classList.toggle("has-selected", Boolean(activeModel));
-
-      const familyButton = document.createElement("button");
-      familyButton.type = "button";
-      familyButton.className = "ai-model-family-trigger";
-      familyButton.setAttribute("aria-expanded", "false");
-      const familyName = document.createElement("span");
-      familyName.textContent = family;
-      familyButton.append(familyName);
-      if (activeModel) {
-        const currentName = document.createElement("span");
-        currentName.className = "ai-model-family-current";
-        currentName.textContent = compactModelName(activeModel.name);
-        familyButton.append(currentName);
+    for (const model of modelChoices) {
+      const row = document.createElement("div");
+      row.className = "ai-model-option-row";
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "ai-model-option";
+      option.dataset.modelName = model.name;
+      option.textContent = model.name;
+      option.title = model.name;
+      option.setAttribute("aria-pressed", String(model.name === selectedName));
+      row.append(option);
+      if (model.name === selectedName && model.supports_thinking) {
+        thinkControl.hidden = false;
+        row.append(thinkControl);
       }
-      const chevron = document.createElement("span");
-      chevron.className = "ai-menu-chevron";
-      chevron.setAttribute("aria-hidden", "true");
-      chevron.textContent = "›";
-      familyButton.append(chevron);
-      familyItem.append(familyButton);
-
-      const options = document.createElement("div");
-      options.className = "ai-model-family-options";
-      options.setAttribute("role", "group");
-      options.setAttribute("aria-label", `${family} models`);
-      for (const model of models) {
-        const optionRow = document.createElement("div");
-        optionRow.className = "ai-model-option-row";
-        const option = document.createElement("button");
-        option.type = "button";
-        option.className = "ai-model-option";
-        option.dataset.modelName = model.name;
-        option.textContent = compactModelName(model.name);
-        option.title = model.name;
-        option.setAttribute("aria-pressed", String(model.name === selectedName));
-        optionRow.append(option);
-        if (model.name === selectedName && model.supports_thinking) {
-          thinkControl.hidden = false;
-          optionRow.append(thinkControl);
-        }
-        options.append(optionRow);
-      }
-      familyItem.append(options);
-      modelFamilyList.append(familyItem);
+      modelList.append(row);
     }
-
-    if (!selectedModel?.supports_thinking) thinkControl.hidden = true;
   }
 
   async function loadModels() {
-    modelSelect.replaceChildren(new Option("Organization default", ""));
+    modelSelect.replaceChildren(new Option("Default", ""));
     await loadModelCatalog();
     try {
       const response = await fetch(`${root.dataset.modelsUrl}?org=${encodeURIComponent(orgSelect.value)}`);
       if (!response.ok) throw new Error("Installed Ollama models could not be loaded.");
       const data = await response.json();
+      defaultModelName = data.default_model || "";
+      contextWindowLimit = Number(data.context_window_limit) || 4096;
       const discoveredModels = Array.isArray(data.models) ? data.models : [];
       modelOptions = discoveredModels.filter((item) => item.available !== false);
       populateModelSelect();
@@ -454,20 +423,43 @@
     thinkToggle.disabled = !selected?.supports_thinking;
     if (thinkToggle.disabled) thinkToggle.checked = false;
     attachmentInput.accept = selected?.supports_vision ? "image/*,.txt,.md,.csv" : ".txt,.md,.csv";
-    modelLabel.textContent = modelSelect.value || "Organization default";
+    modelLabel.textContent = modelSelect.value || "Default";
     modelTriggerLabel.textContent = selected ? compactModelName(selected.name) : "Default";
     modelTriggerSpeed.textContent = benchmark ? `${Number(benchmark.tokens_per_second).toFixed(1)} tok/s` : "";
     modelTriggerSpeed.hidden = !benchmark;
     const modelSummary = modelSelector.querySelector("summary");
     modelSummary.title = selected
       ? `${selected.name}${benchmark ? ` · ${benchmark.tokens_per_second} local tok/s` : ""} · Choose model and reasoning level`
-      : "Organization default · Choose model and reasoning level";
+      : "Default · Choose model and reasoning level";
     modelSummary.setAttribute("aria-label", selected
       ? `Selected model ${selected.name}${benchmark ? `, ${benchmark.tokens_per_second} tokens per second` : ""}. Choose model and reasoning level`
-      : "Organization default model. Choose model and reasoning level");
+      : "Default model. Choose model and reasoning level");
     renderModelMenu();
+    updateContextWindow();
     syncModelGuideSelection();
   }
+
+  function windowModel() { return modelOptions.find(item => item.name === (modelSelect.value || defaultModelName)); }
+  function windowKey() { return `orgforms-context-window:${root.dataset.userId}:${orgSelect.value}:${modelSelect.value || defaultModelName || 'default'}`; }
+  function selectedContextWindow() {
+    const selected = windowModel();
+    const limit = Math.min(contextWindowLimit, selected?.context_window_limit || contextWindowLimit);
+    return Math.min(limit, Number(contextWindowSelect.value) || selected?.context_window || 4096);
+  }
+  function updateContextWindow() {
+    const selected = windowModel(), limit = Math.min(contextWindowLimit, selected?.context_window_limit || contextWindowLimit);
+    const automatic = Math.min(limit, selected?.context_window || 4096);
+    let preference = ''; try { preference = localStorage.getItem(windowKey()) || ''; } catch {}
+    contextWindowSelect.replaceChildren(new Option(`Auto · ${automatic % 1024 === 0 ? automatic / 1024 + "K" : automatic}`, ''));
+    const sizes = [...new Set([512,1024,2048,4096,8192,16384,32768,65536,131072,limit])].filter(size => size >= 128 && size <= limit).sort((a,b)=>a-b);
+    sizes.forEach(size => contextWindowSelect.add(new Option(size.toLocaleString(), String(size))));
+    contextWindowSelect.value = sizes.includes(Number(preference)) ? preference : '';
+    contextWindowSelect.title = `Maximum ${limit.toLocaleString()} tokens for this model and server`;
+  }
+  contextWindowSelect.addEventListener('change', () => {
+    try { localStorage.setItem(windowKey(), contextWindowSelect.value); } catch {}
+    queueSuggestions();
+  });
 
   async function checkPortfolioAvailability() {
     try {
@@ -503,7 +495,7 @@
     suggestionRetry.hidden = true;
     suggestionStatus.hidden = false;
     suggestionStatus.textContent = "Generating questions for this organization…";
-    const selected = modelOptions.find((item) => item.name === modelSelect.value);
+    const selected = windowModel();
     const model = modelSelect.value;
     const orgName = orgSelect.selectedOptions[0]?.textContent.trim() || "this organization";
     try {
@@ -516,13 +508,12 @@
           temporary: true,
           ...(model ? {model} : {}),
           model_options: {
-            ...(selected?.context_window ? {context_window: selected.context_window} : {}),
+            context_window: selectedContextWindow(),
             ...(selected?.supports_thinking ? {think: false} : {}),
           },
           context_options: selectedContextOptions(),
           messages: [
-            {role: "system", content: "Create exactly three short, distinct starter questions for the user's organization. Use its forms, submissions, activity, members, and connected sources as inspiration. Do not answer the questions. Return only a JSON array of three strings."},
-            {role: "user", content: `Suggest useful questions for ${orgName}.`},
+            {role: "user", content: `Create exactly three short, distinct starter questions for ${orgName}. Use only the organization facts and document excerpts supplied with this request. If facts are absent, suggest general questions without inventing details. Do not answer the questions. Return only a JSON array of three strings.`},
           ],
         }),
       });
@@ -576,8 +567,15 @@
   function setTemporaryMode(enabled) {
     temporaryMode = Boolean(enabled);
     temporaryToggle.setAttribute("aria-pressed", String(temporaryMode));
-    temporaryToggle.setAttribute("aria-label", temporaryMode ? "Turn temporary chat off" : "Turn temporary chat on");
+    temporaryToggle.setAttribute("aria-label", temporaryMode ? "Without chat history: on. Switch to saved chats" : "Without chat history: off. Start an unsaved chat");
+    temporaryToggle.querySelector(".ai-history-mode-state").textContent = temporaryMode ? "On" : "Off";
+    document.querySelector("#ai-unsaved-badge").hidden = !temporaryMode;
+    document.querySelector("#ai-history-mode-note").textContent = temporaryMode
+      ? "Not saved to history. Saved memory is off. Turn off to return to saved chats."
+      : "Start a chat without saving it.";
     temporaryToggle.title = temporaryMode ? "Temporary chat is on · this conversation will not be saved" : "Temporary chat · not saved";
+    accountMemoryUse.disabled = temporaryMode;
+    accountMemoryAuto.disabled = temporaryMode;
     contextToggles.saved_memory.disabled = savedMemoryCount === 0 || temporaryMode;
     memoryNote.textContent = temporaryMode
       ? "Not used in temporary chats"
@@ -586,7 +584,13 @@
         : "No saved notes for this organization";
     updateContextSummary();
     root.classList.toggle("temporary-chat", temporaryMode);
+    const draft = promptBox.value;
     resetConversation();
+    promptBox.value = draft;
+    if (temporaryMode) {
+      root.classList.remove("history-open");
+      syncHistoryToggle();
+    }
   }
 
   async function readAttachments() {
@@ -669,6 +673,9 @@
   function resetConversation() {
     messages = [];
     conversationId = null;
+    compactedCount = 0;
+    compactSummary = "";
+    compactNote.textContent = "Keep short excerpts of earlier turns and the latest four messages. Details may be omitted; saved chat stays intact.";
     messageList.replaceChildren();
     showWelcome(true);
     historyList.querySelectorAll(".ai-history-item").forEach((item) => item.removeAttribute("aria-current"));
@@ -679,6 +686,8 @@
 
   function renderHistory(conversations) {
     historyList.replaceChildren();
+    const available = new Set(conversations.map(chat => chat.id));
+    selectedChats = new Set([...selectedChats].filter(id => available.has(id)));
     historyEmpty.hidden = conversations.length > 0;
     for (const conversation of conversations) {
       const button = document.createElement("button");
@@ -689,9 +698,30 @@
       button.title = conversation.title || "New conversation";
       button.dataset.searchText = (conversation.title || "New conversation").toLocaleLowerCase();
       if (conversation.id === conversationId) button.setAttribute("aria-current", "true");
-      button.addEventListener("click", () => openConversation(conversation.id));
-      historyList.append(button);
+      const row = document.createElement("div");
+      row.className = "ai-history-row";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "ai-history-check";
+      checkbox.setAttribute("aria-label", `Select ${button.textContent}`);
+      checkbox.checked = selectedChats.has(conversation.id);
+      checkbox.addEventListener("change", () => { checkbox.checked ? selectedChats.add(conversation.id) : selectedChats.delete(conversation.id); syncChatSelection(); });
+      const more = document.createElement("button");
+      more.type = "button"; more.className = "ai-history-more"; more.textContent = "⋯";
+      more.setAttribute("aria-label", `Actions for ${button.textContent}`);
+      more.setAttribute("aria-haspopup", "menu");
+      more.addEventListener("click", event => { event.stopPropagation(); const rect = more.getBoundingClientRect(); openChatMenu(conversation.id, more, rect.left, rect.bottom); });
+      button.addEventListener("contextmenu", event => { event.preventDefault(); openChatMenu(conversation.id, button, event.clientX, event.clientY); });
+      button.addEventListener("keydown", event => { if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) { event.preventDefault(); const rect=button.getBoundingClientRect(); openChatMenu(conversation.id, button, rect.left, rect.bottom); } });
+      button.addEventListener("click", () => {
+        if (selectingChats) { checkbox.checked = !checkbox.checked; checkbox.dispatchEvent(new Event("change")); }
+        else openConversation(conversation.id);
+      });
+      row.append(checkbox, button, more);
+      historyList.append(row);
     }
+    syncChatSelection();
+    filterChatHistory();
   }
 
   async function loadHistory() {
@@ -708,9 +738,70 @@
     }
   }
 
-  historySearch.addEventListener("input", () => {
+  function filterChatHistory() {
     const query = historySearch.value.trim().toLocaleLowerCase();
-    for (const item of historyList.querySelectorAll(".ai-history-item")) item.hidden = !item.dataset.searchText.includes(query);
+    for (const item of historyList.querySelectorAll(".ai-history-item")) item.parentElement.hidden = !item.dataset.searchText.includes(query);
+  }
+  historySearch.addEventListener("input", filterChatHistory);
+
+  function syncChatSelection() {
+    historyList.classList.toggle("is-selecting", selectingChats);
+    historyBulk.hidden = !selectingChats;
+    historySelect.setAttribute("aria-pressed", String(selectingChats));
+    historyDelete.textContent = `Delete (${selectedChats.size})`;
+    historyDelete.disabled = selectedChats.size === 0;
+    historyList.querySelectorAll(".ai-history-row").forEach(row => { row.querySelector("input").checked = selectedChats.has(row.querySelector(".ai-history-item").dataset.conversationId); });
+  }
+  function closeChatMenu() { historyMenu.hidden = true; }
+  function openChatMenu(id, anchor, x, y) {
+    menuChat = id; menuAnchor = anchor;
+    historyMenu.hidden = false;
+    const rect = historyMenu.getBoundingClientRect();
+    historyMenu.style.left = `${Math.max(8, Math.min(x, innerWidth - rect.width - 8))}px`;
+    historyMenu.style.top = `${Math.max(8, Math.min(y, innerHeight - rect.height - 8))}px`;
+    historyMenu.querySelector("button").focus();
+  }
+  function requestChatDeletion(ids) {
+    closeChatMenu();
+    if (busy) { setStatus("Finish or stop the reply before deleting chats.", true); return; }
+    pendingDelete = [...ids];
+    if (!pendingDelete.length) return;
+    document.querySelector("#ai-delete-description").textContent = `Permanently delete ${pendingDelete.length} chat${pendingDelete.length === 1 ? "" : "s"} and their messages? This cannot be undone.`;
+    document.querySelector("#ai-delete-error").textContent = "";
+    deleteDialog.showModal();
+  }
+  historySelect.addEventListener("click", () => { selectingChats = !selectingChats; if (!selectingChats) selectedChats.clear(); syncChatSelection(); });
+  document.querySelector("#ai-history-cancel").addEventListener("click", () => { selectingChats = false; selectedChats.clear(); syncChatSelection(); });
+  document.querySelector("#ai-history-select-all").addEventListener("click", () => {
+    historyList.querySelectorAll(".ai-history-row:not([hidden]) .ai-history-item").forEach(item => selectedChats.add(item.dataset.conversationId)); syncChatSelection();
+  });
+  historyDelete.addEventListener("click", () => requestChatDeletion(selectedChats));
+  document.querySelector("#ai-history-menu-select").addEventListener("click", () => { selectingChats = true; selectedChats.add(menuChat); closeChatMenu(); syncChatSelection(); menuAnchor?.focus(); });
+  document.querySelector("#ai-history-menu-delete").addEventListener("click", () => requestChatDeletion([menuChat]));
+  document.addEventListener("click", event => { if (!historyMenu.contains(event.target)) closeChatMenu(); });
+  historyMenu.addEventListener("keydown", event => {
+    if (event.key === "Escape") { closeChatMenu(); menuAnchor?.focus(); }
+    if (["ArrowUp","ArrowDown"].includes(event.key)) { event.preventDefault(); const buttons=[...historyMenu.querySelectorAll("button")]; buttons[(buttons.indexOf(document.activeElement)+1)%buttons.length].focus(); }
+  });
+  thread.addEventListener("scroll", closeChatMenu);
+  historyList.addEventListener("scroll", closeChatMenu);
+  window.addEventListener("resize", closeChatMenu);
+  document.querySelector("#ai-delete-cancel").addEventListener("click", () => deleteDialog.close());
+  document.querySelector("#ai-delete-confirm").addEventListener("click", async event => {
+    if (busy) { document.querySelector("#ai-delete-error").textContent = "Finish or stop the reply first."; return; }
+    event.target.disabled = true;
+    try {
+      const response = await fetch(`${root.dataset.historyUrl}delete/`, {method:"POST", headers:{"Content-Type":"application/json", "X-CSRFToken":csrf}, body:JSON.stringify({organization_slug:orgSelect.value, conversation_ids:pendingDelete})});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Chats could not be deleted. Refresh and try again.");
+      if (pendingDelete.includes(conversationId)) resetConversation();
+      selectedChats.clear(); selectingChats = false;
+      deleteDialog.close();
+      await loadHistory();
+      document.querySelector("#ai-history-action-status").textContent = `${data.deleted} chats deleted.`;
+      historySelect.focus();
+    } catch (error) { document.querySelector("#ai-delete-error").textContent = error.message; }
+    finally { event.target.disabled = false; }
   });
 
   async function openConversation(id) {
@@ -723,6 +814,9 @@
       if (!response.ok) throw new Error("Could not open this conversation.");
       const data = await response.json();
       conversationId = data.id;
+      compactedCount = data.compacted_message_count || 0;
+      compactSummary = data.context_summary || "";
+      compactNote.textContent = compactSummary ? `${compactedCount} earlier messages compacted. Saved transcript is unchanged.` : "Keep short excerpts of earlier turns and the latest four messages. Details may be omitted; saved chat stays intact.";
       messages = (data.messages || []).filter((message) => message.role !== "system").map((message) => ({
         role: message.role,
         content: message.content,
@@ -748,7 +842,8 @@
       if (event.submitter === sendButton) activeRequestController?.abort();
       return;
     }
-    let text = promptBox.value.trim();
+    const draft = promptBox.value.trim();
+    let text = draft;
     if (!text) return;
     try {
       await readAttachments();
@@ -778,13 +873,13 @@
     const references = [];
     let answer = "";
     try {
-      const apiMessages = messages.map((item, index) => index === messages.length - 1 ? {
+      const apiMessages = (temporaryMode ? messages.slice(compactedCount) : messages).map((item, index) => index === (temporaryMode ? messages.length - compactedCount : messages.length) - 1 ? {
         ...item,
         ...(attachments.some((attachment) => attachment.image) ? {images: attachments.filter((attachment) => attachment.image).slice(0, 4).map((attachment) => attachment.image)} : {}),
       } : item);
-      const selectedModel = modelOptions.find((item) => item.name === modelSelect.value);
+      const selectedModel = windowModel();
       const options = {
-        ...(selectedModel?.context_window ? {context_window: selectedModel.context_window} : {}),
+        context_window: selectedContextWindow(),
         ...(selectedModel?.supports_thinking ? {think: thinkToggle.checked} : {}),
         ...(selectedModel?.input_mode ? {input_mode: selectedModel.input_mode} : {}),
       };
@@ -792,12 +887,13 @@
       const response = await fetch(root.dataset.chatUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
-        body: JSON.stringify({ organization_slug: orgSelect.value, ...(temporaryMode ? {temporary: true} : {conversation_id: conversationId}), messages: apiMessages, ...(modelSelect.value ? {model: modelSelect.value} : {}), model_options: options, context_options: selectedContextOptions() }),
+        body: JSON.stringify({ organization_slug: orgSelect.value, ...(temporaryMode ? {temporary: true, compact_summary: compactSummary} : {conversation_id: conversationId}), messages: apiMessages, ...(modelSelect.value ? {model: modelSelect.value} : {}), model_options: options, context_options: {...selectedContextOptions(), account_memory: !temporaryMode && accountMemoryUse.checked} }),
         signal: activeRequestController.signal,
       });
       if (!response.ok) {
         const errorBody = await response.json().catch(() => ({}));
-        throw new Error(errorBody.detail || "The AI request could not be completed.");
+        const describe = value => Array.isArray(value) ? value.map(describe).join(' ') : value && typeof value === 'object' ? Object.entries(value).map(([key,message]) => `${key}: ${describe(message)}`).join(' · ') : String(value || '');
+        throw new Error(describe(errorBody.detail || errorBody.errors || errorBody) || `The AI request failed (HTTP ${response.status}).`);
       }
       conversationId = response.headers.get("X-Conversation-ID") || conversationId;
       const reader = response.body.getReader();
@@ -816,11 +912,13 @@
               references.splice(0, references.length, ...chunk.references);
               continue;
             }
+            if (chunk.error) throw new Error(String(chunk.error));
+            if (chunk.message?.thinking && !answer) setStatus("The model is reasoning…");
             answer += chunk.message?.content || "";
             assistant.content.textContent = answer;
             scrollToLatest();
-          } catch {
-            // Ignore malformed keep-alive or provider lines and keep the response readable.
+          } catch (error) {
+            if (!(error instanceof SyntaxError)) throw error;
           }
         }
         if (done) break;
@@ -853,6 +951,7 @@
         assistant.article.remove();
         userMessage?.article.remove();
         messages.pop();
+        if (!promptBox.value.trim()) { promptBox.value = draft; promptBox.dispatchEvent(new Event("input", {bubbles:true})); }
         setStatus(error.message, true);
         if (conversationId && !temporaryMode) await loadHistory();
       }
@@ -889,6 +988,63 @@
     chatForm.requestSubmit();
   }));
   document.querySelector("#ai-new-chat").addEventListener("click", resetConversation);
+  async function loadAccountMemory() {
+    if (accountMemoryDirty) return;
+    try {
+      const response = await fetch("/api/chat/account-memory/");
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Account notes are unavailable.");
+      accountMemoryRevision = data.revision;
+      accountMemoryContent.value = data.content;
+      accountMemoryUse.checked = data.use_enabled;
+      accountMemoryAuto.checked = data.auto_update;
+      updateContextSummary();
+      accountMemoryStatus.textContent = `Updated ${new Date(data.updated_at).toLocaleString()} · ${data.content.length}/2400 characters`;
+    } catch (error) { accountMemoryStatus.textContent = error.message; }
+  }
+  async function saveAccountMemory(fields) {
+    accountMemorySave.disabled = true;
+    accountMemoryUse.disabled = true;
+    accountMemoryAuto.disabled = true;
+    try {
+      const response = await fetch("/api/chat/account-memory/", {method:"PATCH", headers:{"Content-Type":"application/json", "X-CSRFToken":csrf}, body:JSON.stringify({...fields, revision:accountMemoryRevision})});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not save account notes. Refresh and try again.");
+      accountMemoryRevision = data.revision;
+      accountMemoryUse.checked = data.use_enabled;
+      accountMemoryAuto.checked = data.auto_update;
+      updateContextSummary();
+      if (Object.hasOwn(fields, "content")) { accountMemoryContent.value = data.content; accountMemoryDirty = false; }
+      accountMemoryStatus.textContent = "Saved to your account. " + new Date(data.updated_at).toLocaleTimeString();
+    } catch (error) { accountMemoryStatus.textContent = error.message; }
+    finally { accountMemorySave.disabled = false; accountMemoryUse.disabled = temporaryMode; accountMemoryAuto.disabled = temporaryMode; }
+  }
+  accountMemoryContent.addEventListener("input", () => { accountMemoryDirty = true; accountMemoryStatus.textContent = "Unsaved edits"; });
+  accountMemorySave.addEventListener("click", () => saveAccountMemory({content:accountMemoryContent.value}));
+  accountMemoryUse.addEventListener("change", () => saveAccountMemory({use_enabled:accountMemoryUse.checked}));
+  accountMemoryAuto.addEventListener("change", () => saveAccountMemory({auto_update:accountMemoryAuto.checked}));
+  document.querySelector("#ai-account-memory-refresh").addEventListener("click", () => {
+    if (accountMemoryDirty) { accountMemoryStatus.textContent = "Save your edits before refreshing."; return; }
+    loadAccountMemory();
+  });
+  contextSelector.addEventListener("toggle", () => { if (contextSelector.open) loadAccountMemory(); });
+  window.setInterval(() => { if (!document.hidden && contextSelector.open && accountMemoryAuto.checked) loadAccountMemory(); }, 15000);
+  loadAccountMemory();
+  compactButton.addEventListener("click", async () => {
+    if (busy) { compactNote.textContent = "Wait for the reply to finish before compacting."; return; }
+    if (!contextToggles.conversation_history.checked) { compactNote.textContent = "Earlier messages are already excluded from requests."; return; }
+    compactButton.disabled = true;
+    try {
+      const payload = {organization_slug:orgSelect.value, ...(conversationId && !temporaryMode ? {conversation_id:conversationId} : {messages:messages.slice(compactedCount), context_summary:compactSummary})};
+      const response = await fetch("/api/chat/compact/", {method:"POST", headers:{"Content-Type":"application/json", "X-CSRFToken":csrf}, body:JSON.stringify(payload)});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Context could not be compacted yet.");
+      compactedCount = temporaryMode ? compactedCount + data.compacted_message_count : data.compacted_message_count;
+      compactSummary = data.context_summary;
+      compactNote.textContent = `Earlier chat context reduced by ${Math.round(100 * (1 - data.characters_after / data.characters_before))}% in characters. Latest four messages kept; details may be omitted.`;
+    } catch (error) { compactNote.textContent = error.message; }
+    finally { compactButton.disabled = false; }
+  });
   temporaryToggle.addEventListener("click", () => setTemporaryMode(!temporaryMode));
   suggestionRetry.addEventListener("click", generateSuggestions);
   document.querySelector("#ai-refresh-history").addEventListener("click", loadHistory);
@@ -930,7 +1086,6 @@
       filesMenuTrigger.setAttribute("aria-expanded", "false");
       modelSelector.open = false;
       contextSelector.open = false;
-      modelFamilyList.querySelectorAll(".ai-model-family-trigger").forEach((item) => item.setAttribute("aria-expanded", "false"));
       modelGuide.open = false;
       syncHistoryToggle();
     }
@@ -946,7 +1101,6 @@
     }
     if (modelSelector.open && !eventPath.includes(modelSelector)) {
       modelSelector.open = false;
-      modelFamilyList.querySelectorAll(".ai-model-family-trigger").forEach((item) => item.setAttribute("aria-expanded", "false"));
     }
     if (contextSelector.open && !eventPath.includes(contextSelector)) contextSelector.open = false;
     if (modelGuide.open && !eventPath.includes(modelGuide)) modelGuide.open = false;
@@ -1011,18 +1165,14 @@
     modelSelect.value = "";
     modelSelect.dispatchEvent(new Event("change", {bubbles: true}));
   });
-  modelFamilyList.addEventListener("click", (event) => {
+  modelList.addEventListener("click", (event) => {
     const modelOption = event.target.closest("[data-model-name]");
     if (modelOption) {
       modelSelect.value = modelOption.dataset.modelName;
       modelSelect.dispatchEvent(new Event("change", {bubbles: true}));
       return;
     }
-    const familyTrigger = event.target.closest(".ai-model-family-trigger");
-    if (!familyTrigger) return;
-    const expanded = familyTrigger.getAttribute("aria-expanded") === "true";
-    modelFamilyList.querySelectorAll(".ai-model-family-trigger").forEach((item) => item.setAttribute("aria-expanded", "false"));
-    familyTrigger.setAttribute("aria-expanded", String(!expanded));
+
   });
   attachmentInput.addEventListener("change", () => { attachmentNames.textContent = Array.from(attachmentInput.files || []).map((file) => file.name).join(" · "); });
   const hasDroppableContent = (event) => {
@@ -1082,6 +1232,8 @@
     }
   });
   chatForm.addEventListener("dragend", clearDropState);
+  root.addEventListener("ollama-default-changed", () => loadModels());
+  root.addEventListener("ollama-runtime-changed", (event) => { if (event.detail.running) { loadModels(); queueSuggestions(); } });
   loadHistory();
   loadModels();
   checkPortfolioAvailability();

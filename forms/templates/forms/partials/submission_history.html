@@ -1,0 +1,10 @@
+<details class="submission-answer-details">
+  <summary>Response history · {{ submission.history_entries|length }} version{{ submission.history_entries|length|pluralize }}</summary>
+  {% if submission.collection_revision.is_legacy_baseline %}<p class="muted">Legacy baseline: the original form definition and earlier edits were not recorded. These answers are retained as found during migration.</p>{% endif %}
+  {% for entry in submission.history_entries %}
+    <p><strong>Version {{ entry.number }}</strong> · {{ entry.event }} · {{ entry.source }} · <time datetime="{{ entry.created_at|date:'c' }}" data-local-time><span data-local-date>{{ entry.created_at|date:"M j, Y" }}</span> <span data-local-clock>{{ entry.created_at|date:"H:i" }} UTC</span></time> · {{ entry.status }}</p>
+    <dl>{% for answer in entry.answer_rows %}<div><dt>{{ answer.label }}</dt><dd>{{ answer.value }}</dd></div>{% endfor %}</dl>
+    {% for selection in entry.item_selections %}<p class="muted">Item selection total: {{ selection.total }}</p>{% for line in selection.lines %}<p>{{ line.quantity }} × {{ line.name }} · {{ line.unit_price }} each · {{ line.line_total }}</p>{% endfor %}{% endfor %}
+    {% for attachment in entry.attachments %}<a class="submission-file-link" href="{% url 'forms:submission-attachment' attachment.id %}">↓ {{ attachment.original_name }}</a>{% endfor %}
+  {% empty %}<p class="muted">No earlier version was recorded.</p>{% endfor %}
+</details>

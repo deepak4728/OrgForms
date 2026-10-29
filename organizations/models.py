@@ -77,27 +77,25 @@ class OrganizationMembership(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=("organization", "user"), name="unique_org_membership")]
+        constraints = [
+            models.UniqueConstraint(fields=("organization", "user"), name="unique_org_membership"),
+            models.UniqueConstraint(fields=("user",), name="one_organization_per_account"),
+        ]
         ordering = ("organization__name", "user__email")
+
+    def save(self, *args, **kwargs):
+        if self._state.adding:
+            from accounts.models import AccountSpace
+            from django.core.exceptions import ValidationError
+            space = AccountSpace.objects.filter(user_id=self.user_id).first()
+            if space and space.kind == AccountSpace.PERSONAL:
+                raise ValidationError("A personal account cannot join an organization. Create a separate organization account.")
+            if type(self).objects.filter(user_id=self.user_id).exclude(organization_id=self.organization_id).exists():
+                raise ValidationError("This account already belongs to an organization. Use a separate account.")
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.user} — {self.organization} ({self.role})"
-
-
-class OrganizationGroup(models.Model):
-    """Reusable team alias that can be granted access to organization forms."""
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="groups")
-    name = models.CharField(max_length=100)
-    alias = models.SlugField(max_length=100)
-    members = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="organization_groups")
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ("name",)
-        constraints = [models.UniqueConstraint(fields=("organization", "alias"), name="unique_org_group_alias")]
-
-    def __str__(self):
-        return f"{self.organization}: {self.name} (@{self.alias})"
 
 
 class OrganizationDocument(models.Model):
@@ -110,3 +108,56 @@ class OrganizationDocument(models.Model):
 
     class Meta:
         ordering = ("-created_at",)
+
+
+class Department(models.Model):
+    """Organization team; restricted form access is granted explicitly."""
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name="departments")
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, default="")
+    is_archived = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("is_archived", "name", "id")
+        constraints = [models.UniqueConstraint(models.functions.Lower("name"), "organization", name="unique_department_name_per_org")]
+
+    def __str__(self):
+        return self.name
+
+
+class StaffAssignment(models.Model):
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="staff_assignments")
+    membership = models.ForeignKey(OrganizationMembership, on_delete=models.CASCADE, related_name="department_assignments")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("department", "membership"), name="unique_department_membership")]
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.department_id and self.membership_id:
+            if self.department.organization_id != self.membership.organization_id:
+                raise ValidationError("Staff must belong to the department's organization.")
+            if self.department.is_archived:
+                raise ValidationError("Restore this department before changing assignments.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+
+class DepartmentStewardship(models.Model):
+    """Responsibility for a collection does not confer editor or results access."""
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="stewardships")
+    collection = models.OneToOneField("forms.DynamicForm", on_delete=models.CASCADE, related_name="department_stewardship")
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.department_id and self.collection_id and self.department.organization_id != self.collection.organization_id:
+            raise ValidationError("A collection and its steward department must share an organization.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)

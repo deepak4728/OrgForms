@@ -1,0 +1,11 @@
+<dialog class="workspace-dialog people-edit-dialog department-dialog" id="department-{{ department.pk|default:'new' }}" aria-labelledby="department-title-{{ department.pk|default:'new' }}">
+  <div class="dialog-heading"><div><p class="eyebrow">{{ organization.name }} · Responsibility</p><h2 id="department-title-{{ department.pk|default:'new' }}">{% if department %}Edit department{% else %}Create department{% endif %}</h2><p class="muted">Members receive restricted form access only when this department is explicitly selected for that form.</p></div><button type="button" class="icon-button" data-close-dialog aria-label="Close">×</button></div>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="save-department">{% if department %}<input type="hidden" name="department_id" value="{{ department.pk }}">{% endif %}
+    {{ form.non_field_errors }}
+    <div class="field">{{ form.name.label_tag }}{{ form.name }}{{ form.name.errors }}</div>
+    <div class="field">{{ form.description.label_tag }}{{ form.description }}{{ form.description.errors }}</div>
+    <fieldset class="department-options"><legend>Staff assignments</legend><p class="field-hint">A person can serve more than one department.</p>{{ form.members }}{{ form.members.errors }}</fieldset>
+    <fieldset class="department-options"><legend>Collection responsibility</legend><p class="field-hint">Optional. Each collection has one steward department. Selecting a collection replaces its previous steward; access settings stay the same.</p>{{ form.collections }}{{ form.collections.errors }}</fieldset>
+    <div class="dialog-actions"><button type="button" class="button secondary" data-close-dialog>Cancel</button><button type="submit">Save department</button></div>
+  </form>
+</dialog>

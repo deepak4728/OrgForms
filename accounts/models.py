@@ -2,6 +2,20 @@ from django.conf import settings
 from django.db import models
 
 
+class AccountSpace(models.Model):
+    PERSONAL = "personal"
+    ORGANIZATION_CREATE = "organization_create"
+    ORGANIZATION_JOIN = "organization_join"
+    CHOICES = (
+        (PERSONAL, "Personal account"),
+        (ORGANIZATION_CREATE, "Create an organization"),
+        (ORGANIZATION_JOIN, "Join an organization"),
+    )
+
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="account_space")
+    kind = models.CharField(max_length=24, choices=CHOICES)
+
+
 class UserPortfolio(models.Model):
     """Private profile facts and preferences used for user-directed form assistance."""
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="orgforms_portfolio")

@@ -2,8 +2,9 @@
 {% load static %}
 {% block title %}AI Hub · OrgForms{% endblock %}
 {% block head %}
-  <link rel="stylesheet" href="{% static 'chat/ai-hub.css' %}?v=20261021-org-profile-context">
-  <script src="{% static 'chat/ai-hub.js' %}?v=20261021-org-profile-context" defer></script>
+  <link rel="stylesheet" href="{% static 'chat/ai-hub.css' %}?v=20261028-context-bar-2">
+  <script src="{% static 'chat/ai-hub.js' %}?v=20261026-history-actions-1" defer></script>
+  <script src="{% static 'chat/ollama-runtime.js' %}?v=20261025-4" defer></script>
 {% endblock %}
 {% block content %}
 {% if not user.is_authenticated %}
@@ -13,21 +14,37 @@
 {% else %}
   {% csrf_token %}
   <section class="ai-hub-layout" id="ai-hub" data-user-id="{{ request.user.pk }}" data-chat-url="/api/chat/" data-history-url="/api/chat/conversations/" data-models-url="/api/models/" data-memory-url="/api/chat/memory/" data-model-catalog-url="{% static 'chat/model-benchmarks.json' %}?v=20261020-1" data-portfolio-url="{% url 'accounts:personal-portfolio' %}">
+<button class="ai-history-toggle" id="ai-history-toggle" aria-controls="ai-hub-sidebar" type="button" aria-label="Open conversation history" aria-expanded="false">☰</button>
     <aside class="ai-hub-sidebar" id="ai-hub-sidebar" aria-label="AI Hub conversation history">
-      <div class="ai-sidebar-heading"><span>Chats</span><button id="ai-refresh-history" type="button" aria-label="Refresh conversation history" title="Refresh">↻</button></div>
+      <button class="ai-history-mode" id="ai-temporary-toggle" type="button" aria-pressed="false" aria-describedby="ai-history-mode-note"><span>Without chat history</span><span class="ai-history-mode-state" aria-hidden="true">Off</span></button>
+      <p class="ai-history-mode-note" id="ai-history-mode-note">Start a chat without saving it.</p>
+      <div class="ai-sidebar-heading"><span>Chats</span><div class="ai-history-heading-actions"><button id="ai-history-select" type="button" aria-pressed="false" aria-label="Select chats">Select</button><button id="ai-refresh-history" type="button" aria-label="Refresh conversation history" title="Refresh">↻</button></div></div>
+      <div class="ai-history-bulk" id="ai-history-bulk" hidden><button type="button" id="ai-history-select-all">All visible</button><button type="button" id="ai-history-delete" disabled>Delete (0)</button><button type="button" id="ai-history-cancel">Cancel</button></div>
+      <p class="sr-only" id="ai-history-action-status" role="status"></p>
       <label class="sr-only" for="ai-history-search">Search chats</label><input class="ai-history-search" id="ai-history-search" type="search" placeholder="Find a chat">
       <nav class="ai-history-list" id="ai-history-list" aria-label="Recent conversations"></nav>
       <p class="ai-history-empty" id="ai-history-empty">Your chats will appear here.</p>
       <div class="ai-sidebar-spacer"></div>
+      <div class="ai-history-menu" id="ai-history-menu" role="menu" aria-label="Chat actions" hidden><button type="button" role="menuitem" id="ai-history-menu-select">Select chat</button><button type="button" role="menuitem" id="ai-history-menu-delete">Delete chat…</button></div>
+      <dialog class="ai-delete-dialog" id="ai-delete-dialog" aria-labelledby="ai-delete-title"><h2 id="ai-delete-title">Delete chats?</h2><p id="ai-delete-description"></p><p>Saved account and organization memory notes are kept separately.</p><div><button type="button" id="ai-delete-cancel" autofocus>Cancel</button><button type="button" id="ai-delete-confirm">Delete permanently</button></div><p id="ai-delete-error" role="alert"></p></dialog>
     </aside>
 
     <div class="ai-hub-main">
-      <header class="ai-hub-heading">
-        <button class="ai-history-toggle" id="ai-history-toggle" type="button" aria-label="Open conversation history" aria-expanded="false">☰</button>
-        <div class="ai-hub-heading-copy"><h1>AI Hub</h1><p>Forms and activity</p></div>
+      <header class="ai-hub-heading workspace-context-bar">
+        <div class="ai-hub-heading-copy"><h1>AI Hub <span class="ai-unsaved-badge" id="ai-unsaved-badge" hidden>Not saved</span></h1><p>Forms and activity</p></div>
         <div class="ai-hub-header-actions">
+          <details class="ai-runtime-menu" id="ai-ollama-server">
+            <summary aria-label="Ollama server, running models and defaults" title="Ollama controls"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2v7M5 4.5a7 7 0 1 0 10 0"/></svg><span class="ai-runtime-dot" id="ai-ollama-dot" aria-hidden="true"></span></summary>
+            <div class="ai-runtime-panel ai-runtime-unified">
+              <div class="ai-runtime-row"><strong>Ollama</strong><div class="ai-runtime-inline"><button id="ai-ollama-refresh" type="button" class="ai-runtime-refresh" aria-label="Refresh Ollama panel">↻</button><button id="ai-ollama-toggle" type="button" role="switch" aria-checked="false" aria-label="Ollama server" disabled>Off</button></div></div>
+              <p id="ai-ollama-status" role="status">Checking server…</p>
+              <section class="ai-runtime-section"><div class="ai-runtime-row"><strong>Running now</strong><code>ollama ps</code></div><div id="ai-ollama-running" aria-live="polite">Checking loaded models…</div><details class="ai-runtime-raw"><summary>Command output</summary><pre id="ai-ollama-ps-output" tabindex="0">Checking…</pre></details></section>
+              <section class="ai-runtime-section"><label class="ai-runtime-field" for="ai-ollama-default">Default model</label><div class="ai-runtime-inline"><select id="ai-ollama-default" disabled><option value="">Loading installed models…</option></select><button id="ai-ollama-save-default" type="button" disabled>Save</button></div><p id="ai-ollama-default-status" role="status"></p>
+              <label class="ai-window-control" for="ai-context-window"><span>Context window</span><select id="ai-context-window" aria-describedby="ai-context-window-note"><option value="">Auto · 4K</option></select></label><small id="ai-context-window-note" class="ai-window-note">Input + reply tokens for the current chat model. Saved in this browser.</small></section>
+              <small>This computer · shared server. Default model applies to this organization; turning off interrupts local AI requests.</small>
+            </div>
+          </details>
           <button class="ai-header-action ai-new-chat" id="ai-new-chat" type="button" aria-label="New chat" title="New chat"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v14M3 10h14"/></svg></button>
-          <button class="ai-header-action ai-temporary-toggle" id="ai-temporary-toggle" type="button" aria-label="Turn temporary chat on" aria-pressed="false" title="Temporary chat · not saved"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2"/><path d="M10 5.5V10l3 2"/></svg></button>
           <details class="ai-model-guide">
             <summary aria-label="Model guide" title="Model guide"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 16.5V11m7 5.5V7m7 9.5V3.5M2 16.5h16"/></svg><span class="sr-only">Model guide</span></summary>
             <div class="ai-model-guide-popover">
@@ -92,6 +109,7 @@
               <summary class="ai-control ai-context-trigger" aria-label="Choose what context AI Hub can use" title="Choose what context AI Hub can use"><span>Context</span><span id="ai-context-summary">Org · Docs</span><span class="ai-context-caret" aria-hidden="true">⌃</span></summary>
               <div class="ai-context-popover" id="ai-context-popover">
                 <div class="ai-context-heading"><strong>Shared with the model</strong></div>
+                <div class="ai-compact-controls"><button type="button" id="ai-compact-context">Compact context</button><small id="ai-compact-note" role="status">Keep short excerpts of earlier turns and the latest four messages. Details may be omitted; saved chat stays intact.</small></div>
                 <div class="ai-context-always"><span>Current message</span><strong>Always on</strong></div>
                 <label class="ai-context-option"><input id="ai-context-history" type="checkbox" checked><span><strong>Earlier messages</strong><small>Previous turns in this conversation</small></span></label>
                 <label class="ai-context-option"><input id="ai-context-organization" type="checkbox" checked><span><strong>Organization overview</strong><small>Visible submission count and item totals</small></span></label>
@@ -99,7 +117,17 @@
                 <label class="ai-context-option"><input id="ai-context-documents" type="checkbox" checked><span><strong>Relevant documents</strong><small>Matching excerpts from organization documents</small></span></label>
                 <label class="ai-context-option" id="ai-context-memory-option"><input id="ai-context-memory" type="checkbox"><span><strong>Saved memory</strong><small id="ai-context-memory-note">Checking saved notes…</small></span></label>
                 <label class="ai-context-option ai-memory-updates-option"><input id="ai-context-memory-updates" type="checkbox"><span><strong>Build saved notes from chats</strong><small>Allow future conversations to update this organization’s notes</small></span></label>
+                <details class="ai-account-memory" id="ai-account-memory-panel"><summary>Account memory</summary>
+                  <p>Private to your account, across your chats and organizations. Temporary chats never read or update it.</p>
+                  <label><input id="ai-account-memory-use" type="checkbox"> Use account notes in replies</label>
+                  <label><input id="ai-account-memory-auto" type="checkbox"> Update after each saved reply</label>
+                  <small>Auto-updates keep explicit personal preferences, role and ongoing projects. Organization records and attached files are excluded.</small>
+                  <label for="ai-account-memory-content">Review or edit notes</label><textarea id="ai-account-memory-content" maxlength="2400" rows="4" placeholder="E.g. I prefer concise replies."></textarea>
+                  <div class="ai-account-memory-actions"><button type="button" id="ai-account-memory-save">Save notes</button><button type="button" id="ai-account-memory-refresh">Refresh</button></div>
+                  <small id="ai-account-memory-status" role="status">Loading account notes…</small>
+                </details>
                 <label class="ai-context-option ai-profile-context" id="ai-profile-context-wrap" hidden><input id="ai-profile-context" type="checkbox"><span><strong>Saved profile</strong><small>Personal details for this request</small></span></label>
+                <details class="ai-suggestions-info"><summary>About the three suggestions</summary><p>Generated when AI Hub loads or the organization/model changes, using your selected context switches. The chosen context window also applies.</p><p>Always: the selected organization’s name and an instruction to return three short questions. Overview: visible submission count and item-selection count/total. Profile: purpose, description, category and saved business details. Documents: up to three matching excerpts.</p><p>Suggestions are temporary. They receive no earlier chat, saved memory, personal profile, attachments, full form schemas, member directory or dataset records. With all context switches off, only the organization name and question-generation instruction are sent.</p></details>
                 <p class="ai-context-note">Turning off earlier messages excludes them from model requests, but keeps them in chat history. Attached files and selected profile details are saved as part of their message.</p>
               </div>
             </details>
@@ -108,11 +136,12 @@
                 <span id="ai-model-trigger-label">Default</span><span class="ai-model-trigger-speed" id="ai-model-trigger-speed" hidden></span><span class="ai-model-caret" aria-hidden="true">⌃</span>
               </summary>
               <div class="ai-model-selector-popover" id="ai-model-selector-popover">
-                <button class="ai-model-default-choice" id="ai-model-default-choice" type="button" aria-pressed="true">Organization default</button>
-                <div class="ai-model-family-list" id="ai-model-family-list" role="group" aria-label="Model families"></div>
+                <button class="ai-model-default-choice" id="ai-model-default-choice" type="button" aria-pressed="true">Default</button>
+                <div class="ai-model-list" id="ai-model-list" role="group" aria-label="Available models"></div>
+
                 <label class="ai-control ai-think-control" id="ai-think-control" title="Use deeper reasoning when supported" hidden><input id="ai-think-toggle" type="checkbox" disabled><span>Think</span></label>
-                <output class="sr-only" id="ai-model-label">Organization default</output>
-                <select id="ai-model-select" class="sr-only" aria-label="Choose model" aria-hidden="true" tabindex="-1"><option value="">Organization default</option></select>
+                <output class="sr-only" id="ai-model-label">Default</output>
+                <select id="ai-model-select" class="sr-only" aria-label="Choose model" aria-hidden="true" tabindex="-1"><option value="">Default</option></select>
               </div>
             </details>
             <button class="ai-send-button" id="ai-send" type="submit" aria-label="Send message" title="Send message"><span class="ai-send-arrow" aria-hidden="true">↑</span></button>

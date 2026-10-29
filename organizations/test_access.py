@@ -258,7 +258,7 @@ class FormAccessTests(TestCase):
         unowned = Organization.objects.create(name="Unclaimed legacy organization")
         Catalog.objects.create(organization=unowned, name=unowned.name)
         response = self.client.post(reverse("accounts:signup"), {
-            "email": "new-user@test.com", "password1": "new-account-password123", "password2": "new-account-password123",
+            "space": "personal", "email": "new-user@test.com", "password1": "new-account-password123", "password2": "new-account-password123",
         })
         self.assertEqual(response.status_code, 302)
         self.assertFalse(unowned.memberships.exists())
@@ -266,10 +266,11 @@ class FormAccessTests(TestCase):
     def test_local_legacy_claim_preserves_data_and_cannot_replace_an_owner(self):
         unowned = Organization.objects.create(name="Legacy")
         saved_form = DynamicForm.objects.create(organization=unowned, title="Existing records", schema=self.form.schema)
-        call_command("claim_legacy_organization", unowned.slug, self.owner.email, stdout=StringIO())
+        claimant = get_user_model().objects.create_user(username="claimant@test.com", email="claimant@test.com")
+        call_command("claim_legacy_organization", unowned.slug, claimant.email, stdout=StringIO())
         unowned.refresh_from_db()
-        self.assertEqual(unowned.created_by_id, self.owner.pk)
-        self.assertTrue(unowned.memberships.filter(user=self.owner, role="admin").exists())
+        self.assertEqual(unowned.created_by_id, claimant.pk)
+        self.assertTrue(unowned.memberships.filter(user=claimant, role="admin").exists())
         self.assertTrue(DynamicForm.objects.filter(pk=saved_form.pk).exists())
         with self.assertRaises(CommandError):
             call_command("claim_legacy_organization", unowned.slug, self.stranger.email, stdout=StringIO())

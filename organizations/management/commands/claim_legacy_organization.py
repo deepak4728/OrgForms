@@ -1,6 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.core.exceptions import ValidationError
 
 from organizations.models import Organization, OrganizationMembership
 
@@ -23,7 +24,10 @@ class Command(BaseCommand):
         if len(accounts) != 1:
             raise CommandError("Provide the email of a unique active account.")
         user = accounts[0]
-        OrganizationMembership.objects.create(organization=organization, user=user, role="admin")
+        try:
+            OrganizationMembership.objects.create(organization=organization, user=user, role="admin")
+        except ValidationError as error:
+            raise CommandError(" ".join(error.messages)) from error
         organization.created_by = user
         organization.save(update_fields=("created_by", "updated_at"))
         self.stdout.write(self.style.SUCCESS("Organization ownership assigned. Existing records were preserved."))

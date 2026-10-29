@@ -11,7 +11,7 @@ from rest_framework import status
 from rest_framework.decorators import authentication_classes, permission_classes
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.permissions import IsAuthenticated
-from organizations.models import Organization
+from organizations.models import Organization, OrganizationMembership
 from organizations.permissions import require_membership
 from .models import AIConfiguration, LocalModelProfile
 from .serializers import LocalModelProfileSerializer
@@ -89,7 +89,8 @@ def models(request):
         capabilities = set(item.get("capabilities") or [])
         if saved:
             model_options = {
-                "context_window": saved.context_window,
+                "context_window": min(saved.context_window, settings.CHAT_MAX_CONTEXT_WINDOW),
+                "context_window_limit": min(saved.context_window, settings.CHAT_MAX_CONTEXT_WINDOW),
                 "supports_thinking": saved.supports_thinking,
                 "think_enabled": saved.think_enabled,
                 "supports_vision": saved.supports_vision,
@@ -97,9 +98,13 @@ def models(request):
                 "configured": True,
             }
         elif details or capabilities:
+            advertised_context = details.get("context_length")
+            if isinstance(advertised_context, bool) or not isinstance(advertised_context, int) or advertised_context < 128:
+                advertised_context = settings.CHAT_MAX_CONTEXT_WINDOW
             supports_vision = "vision" in capabilities
             model_options = {
-                "context_window": details.get("context_length") or 4096,
+                "context_window": min(4096, settings.CHAT_MAX_CONTEXT_WINDOW, advertised_context),
+                "context_window_limit": min(settings.CHAT_MAX_CONTEXT_WINDOW, advertised_context),
                 "supports_thinking": "thinking" in capabilities,
                 "think_enabled": False,
                 "supports_vision": supports_vision,
@@ -114,7 +119,8 @@ def models(request):
             models_data.append(
                 {
                     "name": saved.name,
-                    "context_window": saved.context_window,
+                    "context_window": min(saved.context_window, settings.CHAT_MAX_CONTEXT_WINDOW),
+                "context_window_limit": min(saved.context_window, settings.CHAT_MAX_CONTEXT_WINDOW),
                     "supports_thinking": saved.supports_thinking,
                     "think_enabled": saved.think_enabled,
                     "supports_vision": saved.supports_vision,
@@ -123,7 +129,7 @@ def models(request):
                     "available": False,
                 }
             )
-    return Response({"models": models_data})
+    return Response({"models": models_data, "default_model": profile.default_model or settings.OLLAMA_DEFAULT_MODEL, "context_window_limit": settings.CHAT_MAX_CONTEXT_WINDOW})
 
 
 @api_view(["GET", "POST"])
@@ -154,3 +160,44 @@ def local_model_profile_detail(request, profile_id):
     serializer.is_valid(raise_exception=True)
     serializer.save()
     return Response(serializer.data)
+
+
+def _runtime_access(request, *, control=False):
+    import ipaddress
+    organization = get_object_or_404(Organization, slug=request.query_params.get('org', ''))
+    membership = require_membership(request.user, organization)
+    try:
+        local = ipaddress.ip_address(request.META.get('REMOTE_ADDR', '')).is_loopback
+    except ValueError:
+        local = False
+    can_control = local and (request.user.is_superuser or membership.role in (OrganizationMembership.ROLE_ADMIN, OrganizationMembership.ROLE_MANAGER))
+    if not local:
+        raise PermissionDenied('Ollama runtime controls are available only on the server computer.')
+    if control and not can_control:
+        raise PermissionDenied('An organization admin or manager on this computer is required to control the shared Ollama server.')
+    return can_control
+
+
+@api_view(['GET', 'POST'])
+def ollama_server(request):
+    from .runtime import RuntimeErrorDetail, server_status, change_server
+    can_control = _runtime_access(request, control=request.method == 'POST')
+    try:
+        if request.method == 'POST':
+            action = request.data.get('action') if isinstance(request.data, dict) else None
+            result = change_server(action)
+        else:
+            result = server_status()
+        return Response({**result, 'can_control': can_control})
+    except RuntimeErrorDetail as error:
+        return Response({'detail': str(error)}, status=409)
+
+
+@api_view(['GET'])
+def ollama_processes(request):
+    from .runtime import RuntimeErrorDetail, running_models
+    _runtime_access(request)
+    try:
+        return Response(running_models())
+    except RuntimeErrorDetail as error:
+        return Response({'detail': str(error)}, status=409)

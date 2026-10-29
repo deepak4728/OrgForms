@@ -1,18 +1,19 @@
 import csv
+import hashlib
 import io
 import json
 import re
 import secrets
 import zipfile
 import xml.etree.ElementTree as ElementTree
+from django import forms as django_forms
 from datetime import timedelta
 from pathlib import Path
 from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.core.files.storage import default_storage
-from django.db import transaction
+from django.db import transaction, OperationalError
 from django.db.models import Count
 from django.db.models.functions import TruncDate
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
@@ -31,11 +32,12 @@ from django.db.models.functions import ExtractHour, TruncHour
 from organizations.models import Organization, OrganizationMembership
 from organizations.permissions import require_membership, visible_forms, require_form_manage, require_form_records, require_form_response, can_respond_to_form
 from orgforms.upload_validation import validate_private_document
-from forms.models import DynamicForm, FormSubmission, SubmissionAttachment, Catalog, CatalogItem, ItemSelection
+from forms.models import DynamicForm, FormSubmission, SubmissionAttachment, Catalog, CatalogItem
 from forms.forms import FormAccessSettingsForm
+from forms.capture import CaptureError, capture_submission, change_submission_status
 from forms.serializers import DynamicFormSerializer, CatalogItemCreateSerializer
 from ai_gateway.classification import classify_text
-from forms.services import validate_form_schema, validate_submission, normalize_schema, save_item_selections
+from forms.services import validate_form_schema, normalize_schema
 from accounts.models import UserPortfolio
 from ai_gateway.models import AIConfiguration
 from ai_gateway.services import classify_remote, generate_json
@@ -80,9 +82,24 @@ def form_editor(request, org_slug, form_id=None):
     initial_access = {
         "visibility": instance.visibility if instance else DynamicForm.VISIBILITY_ORGANIZATION,
         "access_emails": "\n".join(instance.allowed_users.values_list("email", flat=True)) if instance else "",
+        "access_departments": instance.allowed_departments.values_list("pk", flat=True) if instance else [],
     }
-    access_settings = FormAccessSettingsForm(request.POST if request.method == "POST" and can_manage_access else None, initial=initial_access)
+    from datasets.models import DatasetSchemaVersion, Record
+    from datasets.permissions import visible_datasets, require_dataset, dataset_permissions
+    dataset_choices = []
+    lookup_choices = []
+    for dataset in visible_datasets(request.user, organization):
+        version = dataset.current_schema
+        if can_manage_access and not dataset.is_archived:
+            dataset_choices.append({"id": str(version.pk), "name": f"{dataset.name} · schema {version.number}", "fields": version.schema["fields"]})
+        if dataset_permissions(request.user, dataset)["lookup"] and not dataset.is_archived:
+            lookup_choices.append({"id": str(dataset.pk), "name": dataset.name})
+    if can_manage_access and instance and instance.destination_schema_id and str(instance.destination_schema_id) not in {row["id"] for row in dataset_choices}:
+        old = instance.destination_schema
+        dataset_choices.append({"id": str(old.pk), "name": f"{old.dataset.name} · pinned schema {old.number}", "fields": old.schema["fields"]})
+    access_settings = FormAccessSettingsForm(request.POST if request.method == "POST" and can_manage_access else None, initial=initial_access, organization=organization)
     def editor(error="", schema=None):
+        revision = instance.current_revision if instance else None
         return render(request, "forms/form_editor.html", {
             "organization": organization, "form": instance,
             "schema_text": request.POST.get("schema", json.dumps(initial_schema, indent=2)),
@@ -92,6 +109,12 @@ def form_editor(request, org_slug, form_id=None):
             "purpose_value": request.POST.get("purpose", instance.purpose if instance else ""),
             "slug_value": request.POST.get("slug", instance.slug if instance else ""),
             "status_value": request.POST.get("status", instance.status if instance else DynamicForm.STATUS_DRAFT),
+            "response_limit_value": request.POST.get("response_limit", instance.response_limit or "" if instance else ""),
+            "revision": revision,
+            "base_revision_value": request.POST.get("base_revision", str(revision.pk) if revision else ""),
+            "dataset_choices": dataset_choices, "lookup_choices": lookup_choices,
+            "destination_value": request.POST.get("destination_schema", str(instance.destination_schema_id) if instance and instance.destination_schema_id else ""),
+            "mapping_text": request.POST.get("field_mapping", json.dumps(instance.field_mapping if instance else {})),
             "restaurant_order": (request.POST.get("include_items") == "on" or request.POST.get("restaurant_order") == "on") if request.method == "POST" else any(field.get("type") == "item_cards" for field in initial_schema.get("fields", [])),
             "access_settings": access_settings, "error": error,
             "can_manage_access": can_manage_access,
@@ -119,30 +142,63 @@ def form_editor(request, org_slug, form_id=None):
         return editor("Check the sharing settings below.", schema)
     if not title or len(title) > 200:
         return editor("Enter a form title of up to 200 characters.", schema)
+    try:
+        response_limit = django_forms.IntegerField(min_value=1, max_value=2147483647, required=False).clean(request.POST.get("response_limit")) if can_manage_access else instance.response_limit
+        destination = instance.destination_schema if instance else None
+        mapping = instance.field_mapping if instance else {}
+        if can_manage_access and "destination_schema" in request.POST:
+            destination_id = request.POST.get("destination_schema")
+            destination = DatasetSchemaVersion.objects.filter(pk=django_forms.UUIDField().clean(destination_id), dataset__organization=organization).first() if destination_id else None
+            if destination_id and destination is None:
+                raise ValidationError("Choose a destination dataset from this organization.")
+            mapping = json.loads(request.POST.get("field_mapping", "{}"))
+    except (ValidationError, ValueError, TypeError) as error:
+        return editor(str(error), schema)
     form_slug = slugify(request.POST.get("slug", "") or title)[:180] or "form"
-    if form_slug in {"settings", "people", "menu", "submissions", "forms"}:
+    if form_slug in {"settings", "people", "menu", "submissions", "forms", "data"}:
         return editor("Choose a different link name; this name is reserved for workspace pages.", schema)
     if organization.forms.filter(slug=form_slug).exclude(pk=instance.pk if instance else None).exists():
         return editor("That form URL is already used in this organization.", schema)
-    with transaction.atomic():
-        form = instance or DynamicForm(organization=organization, created_by=request.user)
-        form.title = title
-        form.slug = form_slug
-        form.description = request.POST.get("description", "").strip()
-        form.purpose = request.POST.get("purpose", "").strip()[:120]
-        form.schema = schema
-        form.status = request.POST.get("status", DynamicForm.STATUS_DRAFT)
-        if form.status not in dict(DynamicForm.STATUS_CHOICES):
-            form.status = DynamicForm.STATUS_DRAFT
-        if can_manage_access:
-            form.visibility = access_settings.cleaned_data["visibility"]
-        form.save()
-        if can_manage_access:
-            form.allowed_users.set(access_settings.allowed_accounts)
+    try:
+        with transaction.atomic():
+            form = instance or DynamicForm(organization=organization, created_by=request.user)
+            form.title = title
+            form.slug = form_slug
+            form.description = request.POST.get("description", "").strip()
+            form.purpose = request.POST.get("purpose", "").strip()[:120]
+            form.schema = schema
+            form.status = request.POST.get("status", DynamicForm.STATUS_DRAFT)
+            if form.status not in dict(DynamicForm.STATUS_CHOICES):
+                form.status = DynamicForm.STATUS_DRAFT
+            if can_manage_access:
+                form.visibility = access_settings.cleaned_data["visibility"]
+                form.response_limit = response_limit
+                form.destination_schema = destination
+                form.field_mapping = mapping
+            form._expected_revision = request.POST.get("base_revision")
+            form._revision_actor = request.user
+            form.save()
+            if can_manage_access:
+                form.allowed_users.set(access_settings.allowed_accounts)
+                form.allowed_departments.set(access_settings.cleaned_data["access_departments"])
+    except ValidationError as error:
+        return editor(str(error), schema)
     messages.success(request, "Form and sharing settings saved.")
     if request.GET.get("dialog") == "1":
         return render(request, "forms/form_saved.html", {"organization": organization})
     return redirect("organizations:detail", org_slug=organization.slug)
+
+
+def _prepare_response_history(submissions):
+    for submission in submissions:
+        submission.display_respondent = submission.respondent_name or (submission.submitted_by.email if submission.submitted_by else "") or "Anonymous respondent"
+        revision = submission.collection_revision
+        labels = {field["id"]: field["label"] for field in (revision.schema if revision else {}).get("fields", [])}
+        submission.answer_rows = [{"label": labels.get(key, key), "value": value} for key, value in submission.data.items()]
+        submission.visible_attachments = [item for item in submission.attachments.all() if item.is_current]
+        submission.history_entries = list(submission.revisions.all())
+        for entry in submission.history_entries:
+            entry.answer_rows = [{"label": labels.get(key, key), "value": value} for key, value in entry.data.items()]
 
 
 @login_required
@@ -152,7 +208,8 @@ def form_submissions(request, org_slug, form_id):
     require_membership(request.user, organization)
     form = get_object_or_404(DynamicForm, organization=organization, pk=form_id)
     require_form_records(request.user, form)
-    submissions = form.submissions.select_related("submitted_by")[:200]
+    submissions = list(form.submissions.select_related("submitted_by", "collection_revision").prefetch_related("attachments", "revisions")[:200])
+    _prepare_response_history(submissions)
     return render(request, "forms/submissions.html", {
         "organization": organization, "form": form, "submissions": submissions,
         "embedded": request.GET.get("dialog") == "1",
@@ -171,7 +228,7 @@ def menu_editor(request, org_slug):
     if request.method == "POST":
         action = request.POST.get("action", "create")
         if action == "availability":
-            item = get_object_or_404(CatalogItem, catalog=business, pk=request.POST.get("item_id"))
+            item = get_object_or_404(CatalogItem, catalog__organization=organization, pk=request.POST.get("item_id"))
             item.is_available = not item.is_available
             item.save(update_fields=("is_available", "updated_at"))
         else:
@@ -187,11 +244,59 @@ def menu_editor(request, org_slug):
             else:
                 item = serializer.save(catalog=business)
                 messages.success(request, f"{item.name} was added to the menu.")
+        if request.POST.get("return_to") == "library":
+            return redirect(f"{reverse('datasets:library', kwargs={'org_slug': organization.slug})}?view=items")
         return redirect("forms:menu", org_slug=organization.slug)
     return render(request, "forms/menu.html", {
         "organization": organization,
         "items": CatalogItem.objects.filter(catalog=business).order_by("category", "name"),
     })
+
+
+def _capture_scope(request):
+    if request.user.is_authenticated:
+        identity = f"user:{request.user.pk}"
+    else:
+        identity = request.session.get("capture_owner")
+        if not identity:
+            identity = secrets.token_urlsafe(32)
+            request.session["capture_owner"] = identity
+    return hashlib.sha256(identity.encode()).hexdigest()
+
+
+def _capture_response(request, form, *, source):
+    try:
+        if hasattr(request, "data"):
+            raw = request.data
+            payload = raw.dict() if hasattr(raw, "dict") else raw
+            if isinstance(payload, dict):
+                payload = {key: value for key, value in payload.items() if key not in request.FILES}
+        else:
+            payload = json.loads(request.body or b"{}") if request.content_type == "application/json" else request.POST.dict()
+        if isinstance(payload, dict) and isinstance(payload.get("data"), str):
+            payload["data"] = json.loads(payload["data"])
+        if not isinstance(payload, dict):
+            raise CaptureError("The response must be a JSON object.")
+        sessions = request.session.get("public_form_edit_tokens", {})
+        sessions = sessions if isinstance(sessions, dict) else {}
+        result = capture_submission(
+            form_id=form.pk, user=request.user, owner_hash=_capture_scope(request), payload=payload,
+            uploads=request.FILES.dict(), source=source,
+            edit_submission_id=sessions.get(str(payload.get("edit_token", ""))),
+            request_key=request.headers.get("Idempotency-Key"),
+        )
+        if result["edit_token"]:
+            sessions[result["edit_token"]] = result["submission_id"]
+            request.session["public_form_edit_tokens"] = dict(list(sessions.items())[-20:])
+        return JsonResponse(result, status=201 if result["created"] and not result["replayed"] else 200)
+    except (json.JSONDecodeError, ValidationError) as error:
+        return JsonResponse({"errors": getattr(error, "message_dict", {"detail": str(error)}),
+                             "code": getattr(error, "error_code", "invalid_capture")}, status=getattr(error, "status", 400))
+    except OperationalError:
+        # No accepted receipt is returned when the database commit fails.
+        response = JsonResponse({"errors": {"detail": "The response could not be committed. Retry with the same request_id."}, "code": "capture_unavailable"}, status=503)
+        response["Retry-After"] = "1"
+        return response
 
 
 def public_form(request, org_slug, form_slug):
@@ -202,147 +307,36 @@ def public_form(request, org_slug, form_slug):
             return redirect_to_login(request.get_full_path())
         if request.content_type == "application/json":
             return JsonResponse({"errors": {"detail": "This account does not have access to this form."}}, status=403)
-        return render(request, "forms/form_access_denied.html", {
-            "organization": organization, "form": form,
-        }, status=403)
-    schema = normalize_schema(form.schema, organization)
+        return render(request, "forms/form_access_denied.html", {"organization": organization, "form": form}, status=403)
+    if request.method == "POST":
+        return _capture_response(request, form, source="browser")
+    _capture_scope(request)  # Establish guest identity before a potentially lost POST response.
+    revision = form.current_revision
+    schema = normalize_schema(revision.schema, organization)
+    initial_record = None
+    if request.GET.get("record"):
+        from datasets.models import Record
+        from datasets.permissions import require_dataset
+        if revision.destination_schema_id is None:
+            raise Http404()
+        dataset = revision.destination_schema.dataset
+        require_dataset(request.user, dataset, "read")
+        require_dataset(request.user, dataset, "write")
+        try:
+            identity = django_forms.UUIDField().clean(request.GET["record"])
+        except ValidationError:
+            raise Http404()
+        record = get_object_or_404(Record, pk=identity, dataset=dataset, is_archived=False)
+        if record.schema_version_id != revision.destination_schema_id or dataset.current_schema.pk != revision.destination_schema_id:
+            return HttpResponse("The dataset definition changed. Review and republish the collection mapping before updating this record.", status=409)
+        initial_record = {"id": str(record.pk), "version": record.version,
+                          "data": {source: record.data[target] for source, target in revision.field_mapping.items() if target in record.data}}
     field_catalogs = {field["id"]: field["catalog_id"] for field in schema["fields"] if field["type"] == "item_cards"}
     menu_items = list(CatalogItem.objects.filter(catalog_id__in=field_catalogs.values(), catalog__organization=organization, is_available=True).values("id", "catalog_id", "name", "category", "description", "price"))
-    if request.method == "POST":
-        new_file_names = []
-        try:
-            payload = json.loads(request.body or b"{}") if request.content_type == "application/json" else request.POST.dict()
-            if request.content_type and request.content_type.startswith("multipart/form-data") and payload.get("data"):
-                payload["data"] = json.loads(payload["data"])
-            if not isinstance(payload, dict):
-                raise ValidationError("The response must be a JSON object.")
-            data = payload.get("data", payload)
-            if not isinstance(data, dict):
-                raise ValidationError("The response data must be an object.")
-            edit_token = payload.get("edit_token")
-            edit_sessions = request.session.get("public_form_edit_tokens", {})
-            existing_submission_id = edit_sessions.get(str(edit_token)) if edit_token and isinstance(edit_sessions, dict) else None
-            existing_file_ids = set(SubmissionAttachment.objects.filter(
-                submission_id=existing_submission_id, submission__form=form
-            ).values_list("field_id", flat=True)) if existing_submission_id else set()
-            uploaded_files = {}
-            for field in form.schema.get("fields", []):
-                if field.get("type") != "file":
-                    continue
-                field_id = field["id"]
-                uploaded = request.FILES.get(field_id)
-                if uploaded:
-                    upload_error = validate_private_document(uploaded)
-                    if upload_error:
-                        raise ValidationError({field_id: upload_error})
-                    uploaded_files[field_id] = uploaded
-                    data[field_id] = "Uploaded document"
-                elif field_id in existing_file_ids:
-                    data[field_id] = "Uploaded document"
-                else:
-                    data[field_id] = ""
-            data = validate_submission(form, data)
-            with transaction.atomic():
-                submission = None
-                if not isinstance(edit_sessions, dict):
-                    edit_sessions = {}
-                if edit_token:
-                    submission_id = edit_sessions.get(str(edit_token))
-                    if not submission_id:
-                        raise ValidationError("This response can no longer be edited. Submit a new response instead.")
-                    submission = FormSubmission.objects.select_for_update().filter(
-                        pk=submission_id, form=form, organization=organization
-                    ).first()
-                    if not submission:
-                        raise ValidationError("This response can no longer be edited. Submit a new response instead.")
-                submission_data = data
-                if submission:
-                    submission.data = submission_data
-                    submission.respondent_name = str(payload.get("respondent_name", ""))[:200]
-                    submission.respondent_email = str(payload.get("respondent_email", ""))[:254]
-                    submission.save(update_fields=("data", "respondent_name", "respondent_email"))
-                else:
-                    submission = FormSubmission.objects.create(
-                        organization=organization, form=form, data=submission_data,
-                        respondent_name=str(payload.get("respondent_name", ""))[:200],
-                        respondent_email=str(payload.get("respondent_email", ""))[:254],
-                        submitted_by=request.user if request.user.is_authenticated else None,
-                    )
-                selections = save_item_selections(form, submission, data, payload)
-                if selections:
-                    submission.data = {**data, "order_id": selections[0].pk}
-                    submission.save(update_fields=("data",))
-                for field_id, uploaded in uploaded_files.items():
-                    previous = SubmissionAttachment.objects.filter(submission=submission, field_id=field_id)
-                    previous_file_names = [attachment.file.name for attachment in previous if attachment.file]
-                    previous.delete()
-                    attachment = SubmissionAttachment(
-                        submission=submission,
-                        field_id=field_id,
-                        original_name=Path(uploaded.name).name[:255],
-                        file=uploaded,
-                    )
-                    try:
-                        attachment.save()
-                    except Exception:
-                        if attachment.file.name:
-                            default_storage.delete(attachment.file.name)
-                        raise
-                    new_file_names.append(attachment.file.name)
-                    if previous_file_names:
-                        transaction.on_commit(
-                            lambda names=tuple(previous_file_names): [default_storage.delete(name) for name in names],
-                            robust=True,
-                        )
-                if request.user.is_authenticated:
-                    portfolio = UserPortfolio.objects.filter(user=request.user, auto_update_from_submissions=True).first()
-                    if portfolio:
-                        profile_data = portfolio.profile_data if isinstance(portfolio.profile_data, dict) else {}
-                        field_labels = {field.get("id"): field.get("label", field.get("id")) for field in form.schema.get("fields", [])}
-                        saved_answers = {}
-                        for key, value in list(data.items())[:40]:
-                            if next((field.get("type") for field in form.schema.get("fields", []) if field.get("id") == key), "") == "file":
-                                continue
-                            if value in (None, "", [], {}) or not isinstance(value, (str, int, float, bool)):
-                                continue
-                            saved_answers[field_labels.get(str(key), str(key))[:100]] = value[:160] if isinstance(value, str) else value
-                        if saved_answers:
-                            submissions = profile_data.get("submitted_details", {})
-                            if not isinstance(submissions, dict):
-                                submissions = {}
-                            submissions[form.slug] = {"form": form.title, "updated": timezone.localdate().isoformat(), "answers": saved_answers}
-                            profile_data["submitted_details"] = dict(list(submissions.items())[-10:])
-                            while len(json.dumps(profile_data, ensure_ascii=False)) > 20000 and profile_data["submitted_details"]:
-                                oldest = next(iter(profile_data["submitted_details"]))
-                                if oldest == form.slug and len(profile_data["submitted_details"]) == 1:
-                                    break
-                                profile_data["submitted_details"].pop(oldest)
-                            portfolio.profile_data = profile_data
-                            portfolio.save(update_fields=("profile_data", "updated_at"))
-                edit_token = str(edit_token or secrets.token_urlsafe(32))
-                edit_sessions[str(edit_token)] = submission.pk
-                request.session["public_form_edit_tokens"] = dict(list(edit_sessions.items())[-20:])
-                can_edit_response = True
-                can_edit_response = all(selection.status == ItemSelection.STATUS_PENDING and selection.payment_status == ItemSelection.PAYMENT_PENDING for selection in selections)
-        except (json.JSONDecodeError, ValidationError) as exc:
-            for name in new_file_names:
-                default_storage.delete(name)
-            if request.content_type == "application/json":
-                return JsonResponse({"errors": getattr(exc, "message_dict", {"detail": str(exc)})}, status=400)
-            messages.error(request, str(exc))
-        except Exception:
-            for name in new_file_names:
-                default_storage.delete(name)
-            raise
-        else:
-            if request.content_type == "application/json":
-                return JsonResponse({"success": True, "submission_id": submission.pk,
-                                     "edit_token": edit_token if can_edit_response else "",
-                                     "can_edit": can_edit_response}, status=200 if payload.get("edit_token") else 201)
-            messages.success(request, "Your response has been submitted.")
-            return redirect("forms:public-form", org_slug=org_slug, form_slug=form_slug)
     return render(request, "forms/public_form.html", {
-        "organization": organization, "form": form, "menu_items": menu_items, "field_catalogs": field_catalogs,
+        "organization": organization, "form": form, "revision": revision,
+        "initial_record": initial_record,
+        "menu_items": menu_items, "field_catalogs": field_catalogs,
         "portfolio_assistance_enabled": bool(request.user.is_authenticated and UserPortfolio.objects.filter(user=request.user, use_for_form_assistance=True).exists()),
     })
 
@@ -373,7 +367,7 @@ def api_form_detail(request, form_id):
     form = get_object_or_404(DynamicForm.objects.select_related("organization"), pk=form_id)
     membership = require_form_manage(request.user, form)
     privileged = membership.role in (OrganizationMembership.ROLE_ADMIN, OrganizationMembership.ROLE_MANAGER)
-    if not privileged and ({"visibility", "access_emails", "access_groups"} & set(request.data.keys())):
+    if not privileged and ({"visibility", "access_emails", "access_departments", "response_limit", "destination_schema", "field_mapping"} & set(request.data.keys())):
         return Response({"detail": "Only an organization manager or admin can change respondent access."}, status=403)
     if form.organization.is_archived:
         return Response({"detail": "Restore this organization before changing forms."}, status=400)
@@ -419,13 +413,15 @@ def api_form_editors(request, form_id):
 @authentication_classes([SessionAuthentication])
 @permission_classes([IsAuthenticated])
 def api_form_transfer(request, form_id):
-    """Reassign a form owner or move a form and its response history."""
+    """Reassign a form owner within its organization."""
     form = get_object_or_404(DynamicForm.objects.select_related("organization"), pk=form_id)
     source_membership = require_membership(request.user, form.organization)
     if source_membership.role != OrganizationMembership.ROLE_ADMIN:
         return Response({"detail": "Only an organization admin can transfer a form."}, status=403)
     if form.organization.is_archived:
         return Response({"detail": "Restore this organization before transferring forms."}, status=400)
+    if request.data.get("organization") != form.organization.slug:
+        return Response({"detail": "Choose an owner in this organization. Cross-organization moves are not available."}, status=403)
     target = get_object_or_404(Organization, slug=request.data.get("organization", ""), is_archived=False)
     target_membership = OrganizationMembership.objects.filter(
         organization=target, user=request.user, role=OrganizationMembership.ROLE_ADMIN
@@ -437,43 +433,8 @@ def api_form_transfer(request, form_id):
         pk=request.data.get("owner_membership"), organization=target,
         role__in=(OrganizationMembership.ROLE_ADMIN, OrganizationMembership.ROLE_MANAGER),
     )
-    old_org = form.organization
-    if old_org.pk != target.pk:
-        item_fields = [field for field in form.schema.get("fields", []) if field.get("type") == "item_cards"]
-        if item_fields:
-            if form.submissions.exists():
-                return Response({"detail": "Archive or duplicate a catalog form with responses before moving it; its historical item records remain in their original organization."}, status=409)
-            catalog_map = request.data.get("catalog_map", {})
-            if not isinstance(catalog_map, dict) or any(str(field.get("catalog_id")) not in catalog_map for field in item_fields):
-                return Response({"detail": "Provide catalog_map from each source catalog ID to a catalog in the destination organization."}, status=400)
-            for field in item_fields:
-                field["catalog_id"] = catalog_map[str(field["catalog_id"])]
-            try:
-                form.schema = normalize_schema(form.schema, target)
-            except (ValidationError, ValueError, TypeError):
-                return Response({"detail": "Choose catalogs belonging to the destination organization."}, status=400)
-        base_slug = form.slug
-        candidate = base_slug
-        suffix = 2
-        while target.forms.filter(slug=candidate).exclude(pk=form.pk).exists():
-            tail = f"-{suffix}"
-            candidate = f"{base_slug[:180-len(tail)]}{tail}"
-            suffix += 1
-        with transaction.atomic():
-            form.organization = target
-            form.slug = candidate
-            form.created_by = new_owner_membership.user
-            form.save(update_fields=("organization", "slug", "schema", "created_by", "updated_at"))
-            FormSubmission.objects.filter(form=form).update(organization=target)
-            target_member_ids = target.memberships.values_list("user_id", flat=True)
-            editors_to_remove = list(
-                form.editors.exclude(pk__in=target_member_ids).values_list("pk", flat=True)
-            )
-            if editors_to_remove:
-                form.editors.remove(*editors_to_remove)
-    else:
-        form.created_by = new_owner_membership.user
-        form.save(update_fields=("created_by", "updated_at"))
+    form.created_by = new_owner_membership.user
+    form.save(update_fields=("created_by", "updated_at"))
     return Response({
         "success": True,
         "organization": target.name,
@@ -482,14 +443,37 @@ def api_form_transfer(request, form_id):
     })
 
 
-@api_view(["GET"])
+@api_view(["GET", "POST"])
 @authentication_classes([SessionAuthentication])
 @permission_classes([IsAuthenticated])
 def api_submissions(request, form_id):
     form = get_object_or_404(DynamicForm.objects.select_related("organization"), pk=form_id)
+    if request.method == "POST":
+        return _capture_response(request, form, source="api")
     require_form_records(request.user, form)
-    data = [{"id": item.pk, "data": item.data, "submitted_at": item.created_at} for item in form.submissions.all()[:500]]
+    data = [{"id": item.pk, "data": item.data, "submitted_at": item.created_at,
+             "revision_id": item.collection_revision_id, "version": item.version}
+            for item in form.submissions.all()[:500]]
     return Response(data)
+
+
+@api_view(["GET"])
+def api_collection_revisions(request, form_id):
+    form = get_object_or_404(DynamicForm.objects.select_related("organization"), pk=form_id)
+    require_form_records(request.user, form)
+    return Response(list(form.revisions.values("id", "number", "schema_dialect", "title", "description", "purpose", "schema", "destination_schema_id", "field_mapping", "is_legacy_baseline", "created_at")[:200]))
+
+
+@api_view(["GET"])
+def api_submission_history(request, submission_id):
+    submission = get_object_or_404(FormSubmission.objects.select_related("form__organization", "collection_revision"), pk=submission_id)
+    require_form_records(request.user, submission.form)
+    revision = submission.collection_revision
+    return Response({
+        "submission_id": submission.pk, "version": submission.version,
+        "collection_revision": {"id": revision.pk, "number": revision.number, "schema": revision.schema, "schema_dialect": revision.schema_dialect, "is_legacy_baseline": revision.is_legacy_baseline} if revision else None,
+        "history": list(submission.revisions.values("number", "data", "respondent_name", "respondent_email", "status", "attachments", "item_selections", "record_snapshot", "event", "source", "actor_id", "created_at")[:200]),
+    })
 
 
 @api_view(["POST"])
@@ -831,9 +815,9 @@ def organization_submissions(request, org_slug):
         response = HttpResponse(content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="{organization.slug}-submissions.csv"'
         writer = csv.writer(response)
-        writer.writerow(("Submission ID", "Received at", "Form", "Respondent", "Email", "Status", "Response JSON"))
-        for item in recent.select_related("form", "submitted_by").order_by("-created_at")[:5000]:
-            writer.writerow((item.pk, timezone.localtime(item.created_at).isoformat(), _safe_csv_cell(item.form.title), _safe_csv_cell(item.respondent_name), _safe_csv_cell(item.respondent_email), item.get_status_display(), json.dumps(item.data, ensure_ascii=False)))
+        writer.writerow(("Submission ID", "Received at", "Form", "Respondent", "Email", "Status", "Response JSON", "Collection revision", "Response version", "Definition provenance"))
+        for item in recent.select_related("form", "submitted_by", "collection_revision").order_by("-created_at")[:5000]:
+            writer.writerow((item.pk, timezone.localtime(item.created_at).isoformat(), _safe_csv_cell(item.collection_revision.title if item.collection_revision else item.form.title), _safe_csv_cell(item.respondent_name), _safe_csv_cell(item.respondent_email), item.get_status_display(), json.dumps(item.data, ensure_ascii=False), item.collection_revision.number if item.collection_revision else "", item.version, "Legacy baseline" if item.collection_revision and item.collection_revision.is_legacy_baseline else "Captured definition"))
         return response
 
     total_count = recent.count()
@@ -847,36 +831,66 @@ def organization_submissions(request, org_slug):
 
     if grain == "hour":
         start_hour = (local_now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
-        hourly_counts = {
-            timezone.localtime(row["bucket"]).replace(minute=0, second=0, microsecond=0): row["total"]
-            for row in recent.annotate(bucket=TruncHour("created_at")).values("bucket").annotate(total=Count("pk"))
-        }
         points = []
         for offset in range(24):
             bucket = start_hour + timedelta(hours=offset)
-            points.append({"label": bucket.strftime("%H:%M"), "detail": bucket.strftime("%b %d, %H:00"), "count": hourly_counts.get(bucket, 0)})
+            points.append({"key": bucket.isoformat(), "label": bucket.strftime("%H:%M"), "detail": bucket.strftime("%b %d, %H:00"), "count": 0})
         chart_description = "Hourly submissions over the past 24 hours"
     elif grain == "shift":
-        shift_counts = {"Morning": 0, "Afternoon": 0, "Evening": 0}
-        hourly = recent.annotate(hour=ExtractHour("created_at")).values("hour").annotate(total=Count("pk"))
-        for row in hourly:
-            hour = row["hour"]
-            shift = "Morning" if 6 <= hour < 12 else "Afternoon" if 12 <= hour < 18 else "Evening"
-            shift_counts[shift] += row["total"]
-        points = [{"label": label, "detail": f"{label} shift · {period_label.lower()}", "count": count} for label, count in shift_counts.items()]
+        points = [{"key": label, "label": label, "detail": f"{label} shift · {period_label.lower()}", "count": 0} for label in ("Morning", "Afternoon", "Evening")]
         chart_description = f"Submissions by shift · {period_label.lower()} (morning 06–12, afternoon 12–18, evening 18–06)"
     else:
-        daily_counts = {
-            row["day"]: row["total"]
-            for row in recent.annotate(day=TruncDate("created_at")).values("day").annotate(total=Count("pk"))
-        }
         points = []
         for day_offset in range(days):
             day = first_day + timedelta(days=day_offset)
-            points.append({"label": day.strftime("%b %-d"), "detail": day.strftime("%b %d, %Y"), "count": daily_counts.get(day, 0)})
+            points.append({"key": day.isoformat(), "label": day.strftime("%b %-d"), "detail": day.strftime("%b %d, %Y"), "count": 0})
         chart_description = "Daily submissions over the past 24 hours" if period == "24h" else f"Daily submissions over the past {days} days"
-    peak = max((point["count"] for point in points), default=0)
-    trend = [{**point, "height": max(4, round(point["count"] / peak * 100)) if peak else 4} for point in points]
+
+    # Build one trend per form so the chart remains useful when an organization
+    # has several forms. Keep four named series and combine the rest as Other.
+    form_totals = list(recent.values("form_id", "form__title").annotate(total=Count("pk")).order_by("-total", "form__title"))
+    counts_by_form = {}
+    if grain == "hour":
+        buckets = recent.annotate(bucket=TruncHour("created_at")).values("form_id", "bucket").annotate(total=Count("pk"))
+        for row in buckets:
+            bucket = timezone.localtime(row["bucket"]).replace(minute=0, second=0, microsecond=0).isoformat()
+            counts_by_form.setdefault(row["form_id"], {})[bucket] = row["total"]
+    elif grain == "shift":
+        buckets = recent.annotate(hour=ExtractHour("created_at")).values("form_id", "hour").annotate(total=Count("pk"))
+        for row in buckets:
+            hour = row["hour"]
+            shift = "Morning" if 6 <= hour < 12 else "Afternoon" if 12 <= hour < 18 else "Evening"
+            counts = counts_by_form.setdefault(row["form_id"], {})
+            counts[shift] = counts.get(shift, 0) + row["total"]
+    else:
+        buckets = recent.annotate(bucket=TruncDate("created_at")).values("form_id", "bucket").annotate(total=Count("pk"))
+        for row in buckets:
+            counts_by_form.setdefault(row["form_id"], {})[row["bucket"].isoformat()] = row["total"]
+
+    named_forms = form_totals[:4]
+    chart_series = []
+    for index, row in enumerate(named_forms):
+        values = [counts_by_form.get(row["form_id"], {}).get(point["key"], 0) for point in points]
+        chart_series.append({"name": row["form__title"], "values": values, "class_name": f"series-{index}"})
+    if len(form_totals) > len(named_forms):
+        other_ids = {row["form_id"] for row in form_totals[len(named_forms):]}
+        values = [sum(counts_by_form.get(form_pk, {}).get(point["key"], 0) for form_pk in other_ids) for point in points]
+        chart_series.append({"name": "Other forms", "values": values, "class_name": "series-other"})
+
+    peak = max((value for series in chart_series for value in series["values"]), default=0)
+    for point_index, point in enumerate(points):
+        point["x"] = round(point_index * 1000 / max(len(points) - 1, 1))
+        point["count"] = sum(series["values"][point_index] for series in chart_series)
+    for series in chart_series:
+        coordinates = []
+        series["markers"] = []
+        for point_index, point in enumerate(points):
+            value = series["values"][point_index]
+            y = 176 - round(value / peak * 148) if peak else 176
+            coordinates.append(f"{point['x']},{y}")
+            series["markers"].append({"x": point["x"], "y": y, "value": value, "detail": point["detail"]})
+        series["svg_points"] = " ".join(coordinates)
+    trend = points
 
     if request.method == "POST" and request.POST.get("action") == "update-status":
         if not can_review:
@@ -886,19 +900,26 @@ def organization_submissions(request, org_slug):
         if status not in valid_statuses:
             messages.error(request, "Choose a valid submission status.")
         else:
-            submission.status = status
-            submission.save(update_fields=("status",))
-            messages.success(request, "Submission status updated.")
+            try:
+                change_submission_status(submission_id=submission.pk, user=request.user, status=status, expected_version=request.POST.get("expected_version"))
+            except ValidationError as error:
+                messages.error(request, str(error))
+            else:
+                messages.success(request, "Submission status updated.")
         query = request.GET.urlencode()
         url = reverse("forms:all-submissions", kwargs={"org_slug": organization.slug})
         return redirect(f"{url}?{query}" if query else url)
 
     export_params = request.GET.copy()
     export_params["export"] = "csv"
+    records_mode = request.GET.get("view") == "records"
     pending_params = request.GET.copy()
     pending_params.pop("export", None)
     pending_params["status"] = FormSubmission.STATUS_PENDING
-    submissions = recent.select_related("form", "submitted_by").prefetch_related("attachments").order_by("-created_at")[:250]
+    if records_mode:
+        pending_params["view"] = "records"
+    submissions = list(recent.select_related("form", "submitted_by", "collection_revision").prefetch_related("attachments", "revisions").order_by("-created_at")[:250])
+    _prepare_response_history(submissions)
     return render(request, "forms/all_submissions.html", {
         "organization": organization,
         "submissions": submissions,
@@ -907,6 +928,9 @@ def organization_submissions(request, org_slug):
         "active_forms_count": accessible_forms.filter(status="active").count(),
         "daily_rate": round(total_count / {"24h": 1, "7d": 7, "30d": 30, "90d": 90}[period], 2),
         "trend": trend,
+        "chart_series": chart_series,
+        "records_mode": records_mode,
+        "view_query": "view=records" if records_mode else "",
         "chart_description": chart_description,
         "selected_period": period,
         "selected_grain": grain,

@@ -1,0 +1,49 @@
+/* Existing OrgForms palette/type; flat data surfaces and a fluid two-column form.
+   Grid: two minmax(0,1fr) columns plus a 16px gap; narrow screens use one. */
+.data-page { width:100%; min-width:0; }
+.data-page h1 { font-size:26px; letter-spacing:-.035em; margin:0 0 8px; }
+.data-page h2 { font-size:17px; margin:0 0 8px; }
+.data-page h3 { font-size:14px; }
+.data-page p { overflow-wrap:anywhere; }
+.data-heading,.data-section-heading,.data-actions,.data-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.data-heading { margin:8px 0 20px; align-items:flex-start; }
+.data-heading p { margin:0 0 8px; }
+.data-heading .eyebrow { font-size:12px; }
+.data-panel { background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:18px; margin-bottom:16px; box-shadow:none; min-width:0; }
+.data-section-heading { margin-bottom:12px; }
+.data-table-scroll { max-width:100%; overflow-x:auto; }
+.data-table { width:100%; border-collapse:collapse; font-size:13px; }
+.data-table th { font-size:12px; font-weight:500; color:var(--muted); text-align:left; }
+.data-table td,.data-table th { padding:12px 10px; vertical-align:top; border-bottom:1px solid var(--line); }
+.data-table small { display:block; font-size:12px; color:var(--muted); margin-top:4px; }
+.data-table input[type=checkbox],.data-check input[type=checkbox],.data-record-form input[type=checkbox] { width:auto; min-height:20px; }
+.data-version { font-size:12px; padding:4px 8px; border:1px solid var(--line); border-radius:6px; display:inline-block; }
+.data-empty { padding:22px 0; max-width:640px; }
+.data-form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.data-page input,.data-page textarea,.data-page select { max-width:100%; min-width:0; }
+.data-page small { color:var(--muted); }
+.data-page .field { min-width:0; }
+.data-advanced { padding:12px 0; border-top:1px solid var(--line); }
+.data-check { display:flex; align-items:center; gap:8px; margin:12px 0; }
+.data-footer { margin-top:18px; padding-top:16px; border-top:1px solid var(--line); }
+.data-values { margin:0; }
+.data-values div { display:grid; grid-template-columns:minmax(80px,1fr) minmax(100px,2fr); gap:12px; padding:6px 0; border-bottom:1px solid var(--line); }
+.data-values dt { font-weight:500; font-size:12px; color:var(--muted); }
+.data-values dd { margin:0; overflow-wrap:anywhere; }
+.data-history { padding:12px 0; border-top:1px solid var(--line); }
+.data-history summary { cursor:pointer; font-size:13px; padding-bottom:8px; }
+.data-id { display:block; overflow-wrap:anywhere; font-size:12px; }
+.data-search { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+.data-search input { flex:1; }
+.schema-field { border-top:1px solid var(--line); padding:14px 0; }
+.schema-field-main { display:grid; grid-template-columns:1.3fr 1fr 1fr auto auto; gap:12px; align-items:end; }
+.schema-field-main label { font-size:12px; }
+.schema-field-options { display:flex; gap:12px; flex-wrap:wrap; padding-top:8px; }
+.schema-field-options label { flex:1; min-width:120px; font-size:12px; }
+@media(max-width:640px) { .data-form-grid { grid-template-columns:1fr; } .data-panel { padding:14px; } .schema-field-main { grid-template-columns:repeat(2,minmax(0,1fr)); } .data-heading h1 { font-size:24px; } .data-table { min-width:520px; } }
+.data-search input[type=search] { appearance:none; min-height:36px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--text); font:inherit; padding:8px 10px; }
+.data-table td:nth-child(3),.data-table th:nth-child(3) { text-align:right; font-variant-numeric:tabular-nums; }
+.data-page .data-check input { flex:none; }
+.schema-field input:not([type=checkbox]),.schema-field select { width:100%; min-height:36px; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--surface); color:var(--text); font:inherit; }
+.schema-field input[type=checkbox] { width:auto; min-height:20px; margin-left:6px; }
+.data-table td:nth-child(3),.data-table td:nth-child(4),.data-table td:last-child { white-space:nowrap; }

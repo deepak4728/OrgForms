@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "accounts",
     "forms",
+    "datasets",
     "chat",
     "organizations",
     "ai_gateway",

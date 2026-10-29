@@ -12,7 +12,7 @@ def visible_forms(user, organization):
     return forms.filter(
         ~Q(visibility="restricted")
         | Q(allowed_users=user)
-        | Q(allowed_groups__members=user)
+        | Q(allowed_departments__staff_assignments__membership=membership, allowed_departments__organization=organization, allowed_departments__is_archived=False)
         | Q(editors=user)
     ).distinct()
 
@@ -51,7 +51,7 @@ def can_respond_to_form(user, form):
         return True
     if form.visibility == DynamicForm.VISIBILITY_ORGANIZATION:
         return membership is not None
-    return form.allowed_users.filter(pk=user.pk).exists() or (membership is not None and form.allowed_groups.filter(members=user).exists())
+    return form.allowed_users.filter(pk=user.pk).exists() or (membership is not None and form.allowed_departments.filter(organization=form.organization, is_archived=False, staff_assignments__membership=membership).exists())
 
 
 def require_form_response(user, form):

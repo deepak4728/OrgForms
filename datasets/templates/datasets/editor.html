@@ -1,0 +1,16 @@
+{% extends "datasets/base.html" %}{% load static %}
+{% block title %}{% if dataset %}Edit dataset{% else %}New dataset{% endif %} · {{ organization.name }}{% endblock %}
+{% block data_head %}<script src="{% static 'datasets/schema-editor.js' %}" defer></script><script src="{% static 'library-draft.js' %}" defer></script>{% endblock %}
+{% block data_content %}
+{% if not embedded %}<header class="data-heading workspace-context-bar"><div><p class="eyebrow"><a href="{% url 'datasets:list' organization.slug %}">{{ organization.name }} / Data</a></p><h1>{% if dataset %}Edit dataset{% else %}New dataset{% endif %}</h1><p class="muted">Define reusable record fields. Existing records keep their original schema version.</p></div></header>{% endif %}
+<form method="post" class="data-panel" id="dataset-definition-form">{% csrf_token %}{{ form.base_schema }}{{ form.non_field_errors }}
+{% if not dataset %}<div class="field" data-library-draft data-kind="dataset" data-url="{% url 'ai_gateway:library-draft' organization.slug 'dataset' %}"><label for="dataset-ai-prompt">Describe the dataset</label><textarea id="dataset-ai-prompt" rows="2" maxlength="4000"></textarea><button type="button" class="secondary" data-draft-button>Draft with local AI</button><p class="muted" data-draft-status role="status">Review the suggested fields before saving.</p></div>{% endif %}
+<div class="data-form-grid"><div class="field"><label for="{{ form.name.id_for_label }}">Dataset name</label>{{ form.name }}{{ form.name.errors }}</div><div class="field"><label for="{{ form.label_field.id_for_label }}">Lookup label field ID</label>{{ form.label_field }}{{ form.label_field.errors }}<small>{{ form.label_field.help_text }}</small></div></div>
+<div class="field"><label for="{{ form.description.id_for_label }}">Description</label>{{ form.description }}{{ form.description.errors }}</div>
+<div class="data-section-heading"><div><h2>Fields</h2><p class="muted">Field IDs stay stable when labels change.</p></div><button type="button" class="secondary" id="dataset-add-field">Add field</button></div>
+<div id="dataset-field-list"></div><p role="alert" id="dataset-schema-error" class="error" hidden></p>{{ form.schema.errors }}
+<details class="data-advanced"><summary>Advanced schema</summary><p class="muted">Supported format: orgforms-fields-v1. Conditional visibility can be configured here.</p><label class="data-check"><input type="checkbox" id="dataset-use-json"> Use the JSON definition when saving</label><label for="{{ form.schema.id_for_label }}" class="sr-only">Dataset schema JSON</label>{{ form.schema }}<button type="button" class="secondary" id="dataset-load-json">Load JSON into fields</button></details>
+{% if dataset %}<label class="data-check">{{ form.is_archived }} Archive dataset (blocks new record writes)</label>{% endif %}
+<div class="data-footer">{% if embedded %}<button type="button" class="secondary" onclick="window.parent.postMessage({type:'orgforms:library-close'}, location.origin)">Cancel</button>{% else %}<a href="{% url 'datasets:list' organization.slug %}">Cancel</a>{% endif %}<button type="submit">Save dataset</button></div></form>
+{{ lookup_datasets|json_script:"dataset-lookup-choices" }}
+{% endblock %}

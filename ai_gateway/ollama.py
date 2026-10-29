@@ -7,7 +7,7 @@ class InvalidOllamaResponse(ValueError):
     pass
 
 
-def open_ollama_response(path, payload=None):
+def open_ollama_response(path, payload=None, *, timeout=None):
     body = None
     headers = {"Accept": "application/json, application/x-ndjson"}
     method = "GET"
@@ -23,7 +23,7 @@ def open_ollama_response(path, payload=None):
         headers=headers,
         method=method,
     )
-    return urlopen(request, timeout=settings.OLLAMA_TIMEOUT_SECONDS)
+    return urlopen(request, timeout=settings.OLLAMA_TIMEOUT_SECONDS if timeout is None else timeout)
 
 
 def get_ollama_models():

@@ -1,5 +1,6 @@
 import uuid
 from django.db import models
+from django.conf import settings
 import hashlib
 
 
@@ -13,6 +14,9 @@ class ChatConversation(models.Model):
         on_delete=models.CASCADE,
         related_name="chat_conversations",
     )
+    account = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.CASCADE, related_name="ai_conversations")
+    context_summary = models.TextField(blank=True, default="")
+    compacted_message_count = models.PositiveIntegerField(default=0)
     title = models.CharField(max_length=160, default="New conversation")
     model = models.CharField(max_length=256, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -93,3 +97,12 @@ class ChatMemory(models.Model):
                 name="unique_chat_memory_per_owner",
             )
         ]
+
+
+class AccountAIMemory(models.Model):
+    account = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="ai_memory")
+    content = models.TextField(blank=True, default="")
+    use_enabled = models.BooleanField(default=False)
+    auto_update = models.BooleanField(default=False)
+    revision = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)

@@ -31,6 +31,10 @@ def generate_json(profile, prompt, system_prompt, *, max_tokens=2000):
         ],
         "options": {"num_predict": max_tokens},
     }
+    if profile.effective_provider == AIConfiguration.PROVIDER_LOCAL:
+        from .creation import thinking_capability
+        if thinking_capability(profile.default_model) is True:
+            payload["think"] = True
     with open_model_response(profile, payload) as response:
         result = json.load(response)
     content = result.get("message", {}).get("content", "")

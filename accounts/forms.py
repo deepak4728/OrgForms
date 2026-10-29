@@ -2,9 +2,11 @@ from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from accounts.models import AccountSpace
 
 
 class RegistrationForm(forms.Form):
+    space = forms.ChoiceField(choices=AccountSpace.CHOICES, label="How will you use this account?", widget=forms.RadioSelect)
     # The built-in User model stores the email login in its 150-character username.
     email = forms.EmailField(max_length=150)
     password1 = forms.CharField(widget=forms.PasswordInput, min_length=12, label="Password")

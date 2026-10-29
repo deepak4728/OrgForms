@@ -10,7 +10,9 @@
       const dark = theme === 'dark';
       button.setAttribute('aria-label', `Switch to ${dark ? 'light' : 'dark'} mode`);
       button.title = `Switch to ${dark ? 'light' : 'dark'} mode`;
-      button.innerHTML = `<span aria-hidden="true">${dark ? '☼' : '◐'}</span>`;
+      const sun = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3.6"/><path d="M12 2.5v2M12 19.5v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2.5 12h2m15 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+      const moon = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19.2 15.2A8 8 0 0 1 8.8 4.8 8.1 8.1 0 1 0 19.2 15.2Z"/><path d="M16.5 4.5v3m-1.5-1.5h3"/></svg>';
+      button.innerHTML = `<span aria-hidden="true">${dark ? sun : moon}</span>`;
     }
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#191715' : '#f4efe9');
   }
@@ -20,6 +22,17 @@
     const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
     localStorage.setItem('orgforms-theme', next);
     setTheme(next);
+  });
+
+  const organizationSwitcher = document.querySelector('.organization-switcher');
+  document.addEventListener('click', (event) => {
+    if (organizationSwitcher?.open && !organizationSwitcher.contains(event.target)) organizationSwitcher.open = false;
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && organizationSwitcher?.open) {
+      organizationSwitcher.open = false;
+      organizationSwitcher.querySelector('summary')?.focus();
+    }
   });
 
   const localDateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -117,8 +130,8 @@
     navigationPrefix = false;
     clearTimeout(navigationTimer);
     const routes = {
-      d: document.querySelector('.top-nav a[href*="dashboard"]')?.href,
-      f: document.querySelector('.top-nav a[href*="#organization-forms"]')?.href,
+      d: document.querySelector('.organization-switcher-all')?.href || document.querySelector('#workspace-nav-link')?.href,
+      f: document.querySelector('#workspace-nav-link')?.href,
       s: document.querySelector('.top-nav a[href*="submissions"]')?.href,
       p: document.querySelector('.top-nav a[href*="people"]')?.href,
       a: document.querySelector('.top-nav a[href*="_chat"]')?.href,
@@ -225,8 +238,23 @@
     }));
   });
 
+  const toastStack = document.querySelector('.toast-stack');
+  const toastDialogs = new WeakSet();
   function openDialog(dialog) {
-    if (dialog instanceof HTMLDialogElement && !dialog.open) dialog.showModal();
+    if (!(dialog instanceof HTMLDialogElement) || dialog.open) return;
+    dialog.showModal();
+    // Modal dialogs live in the browser's top layer, above ordinary z-indexes.
+    if (toastStack) {
+      dialog.append(toastStack);
+      if (!toastDialogs.has(dialog)) {
+        toastDialogs.add(dialog);
+        dialog.addEventListener('close', () => {
+          if (toastStack.parentElement !== dialog) return;
+          const otherDialog = Array.from(document.querySelectorAll('dialog[open]')).at(-1);
+          (otherDialog || document.body).append(toastStack);
+        });
+      }
+    }
   }
   const workflowDialog = document.getElementById('form-workflow-dialog');
   const workflowFrame = document.getElementById('form-workflow-frame');
@@ -252,6 +280,7 @@
     workflowFrame.hidden = true;
     workflowLoading.textContent = 'Loading…';
     workflowLoading.hidden = false;
+    workflowDialog.classList.toggle('is-prompt-workflow', /\/forms\/new\/$/.test(url.pathname));
     workflowFrame.src = url.href;
     openDialog(workflowDialog);
   }
@@ -260,6 +289,7 @@
     if (!workflowDialog.open) return;
     try {
       if (!workflowFrame.contentDocument?.querySelector('.embedded-main')) throw new Error('Unavailable');
+      workflowDialog.classList.toggle('is-prompt-workflow', Boolean(workflowFrame.contentDocument.querySelector('.is-prompt-mode')));
       workflowLoading.hidden = true;
       workflowFrame.hidden = false;
     } catch (_) {
@@ -280,6 +310,7 @@
   window.addEventListener('message', (event) => {
     if (event.origin !== location.origin) return;
     if (workflowDialog?.open && event.source === workflowFrame?.contentWindow) {
+      if (event.data?.type === 'orgforms:builder-stage') workflowDialog.classList.toggle('is-prompt-workflow', event.data.stage === 'prompt');
       if (event.data?.type === 'orgforms:close') workflowDialog.close();
       if (event.data?.type === 'orgforms:saved') window.location.reload();
       return;
@@ -555,12 +586,12 @@
       button.disabled = true;
       status.textContent = 'Saving access settings…';
       const emails = form.querySelector('[name="access_emails"]')?.value.split(/[\s,;]+/).map((email) => email.trim()).filter(Boolean) || [];
-      const groups = form.querySelector('[name="access_groups"]')?.value.split(/[\s,;]+/).map((alias) => alias.replace(/^@/, '').trim()).filter(Boolean) || [];
+      const departments = [...form.querySelectorAll('[name="access_departments"]:checked')].map(input => Number(input.value));
       try {
         const response = await fetch(form.dataset.apiUrl, {
           method: 'PATCH',
           headers: {'Content-Type': 'application/json', 'X-CSRFToken': form.querySelector('[name="csrfmiddlewaretoken"]').value},
-          body: JSON.stringify({visibility: visibility.value, access_emails: emails, access_groups: groups}),
+          body: JSON.stringify({visibility: visibility.value, access_emails: emails, access_departments: departments}),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(Object.values(result).flat().join(' ') || 'Could not save access settings.');
@@ -663,6 +694,23 @@
       document.querySelectorAll('[data-preview-panel]').forEach((panel) => {
         panel.hidden = panel.dataset.previewPanel !== selectedView;
       });
+    });
+  });
+
+  document.querySelectorAll('[data-delete-confirm]').forEach((form) => {
+    const input = form.querySelector('[name="confirm_name"]');
+    const error = form.querySelector('[data-delete-error]');
+    input.addEventListener('input', () => { error.hidden = true; input.removeAttribute('aria-invalid'); });
+    form.addEventListener('submit', (event) => {
+      const expected = form.querySelector('strong').textContent;
+      if (input.value.trim() !== expected) {
+        event.preventDefault();
+        error.hidden = false;
+        input.setAttribute('aria-invalid', 'true');
+        input.focus();
+      } else if (!window.confirm('This permanently deletes all organization data. Continue?')) {
+        event.preventDefault();
+      }
     });
   });
 
