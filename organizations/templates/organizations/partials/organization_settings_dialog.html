@@ -2,8 +2,7 @@
   <div class="dialog-heading"><div><p class="eyebrow">Organization settings · {{ org.category_display }}</p><h2 id="manage-title-{{ org.slug }}">{{ org.name }}</h2><p class="muted">Manage profile, access, ownership, and organization status.</p></div><button type="button" class="icon-button" data-close-dialog aria-label="Close">×</button></div>
   <div class="manage-tabs" role="tablist" aria-label="Organization settings">
     <button class="manage-tab" type="button" role="tab" data-manage-tab="details" aria-selected="true">Details</button>
-    <button class="manage-tab" type="button" role="tab" data-manage-tab="members" aria-selected="false">Members</button>
-    <button class="manage-tab" type="button" role="tab" data-manage-tab="ownership" aria-selected="false">Ownership</button>
+    <button class="manage-tab" type="button" role="tab" data-manage-tab="members" aria-selected="false">Members &amp; ownership</button>
     <button class="manage-tab" type="button" role="tab" data-manage-tab="lifecycle" aria-selected="false">Archive &amp; delete</button>
   </div>
   <div class="manage-dialog-body">
@@ -29,12 +28,11 @@
         </div>{% empty %}<p class="muted">No members are attached to this organization yet.</p>{% endfor %}
       </div>
       {% if org.dashboard_can_manage_members %}<form method="post" action="{% url 'organizations:settings' org.slug %}" class="add-member-form">{% csrf_token %}<input type="hidden" name="action" value="add-member"><input type="hidden" name="return_to" value="{{ manage_return_to|default:"dashboard" }}"><input type="hidden" name="return_tab" value="members"><div><p class="eyebrow">Add a teammate</p><h3>Invite an existing OrgForms account</h3><p class="muted">They need an account before you can add their email.</p></div><div class="row"><div class="field"><label for="new-member-email-{{ org.slug }}">Email</label><input id="new-member-email-{{ org.slug }}" name="email" type="email" placeholder="person@example.com" required></div><div class="field"><label for="new-member-role-{{ org.slug }}">Role</label><select id="new-member-role-{{ org.slug }}" name="role"><option value="member">Member</option><option value="manager">Manager</option><option value="admin">Admin</option></select></div><button type="submit">Add member</button></div></form>{% endif %}
-    </section>
-
-    <section class="manage-tab-panel" role="tabpanel" data-manage-panel="ownership" hidden>
+      <section class="organization-owner-controls"><h3>Organization ownership</h3>
       {% if org.dashboard_can_transfer %}<p class="muted">The new owner becomes an admin. Your current access changes to manager.</p>
-        {% if org.dashboard_transfer_targets %}<form method="post" action="{% url 'organizations:settings' org.slug %}" class="row lifecycle-form">{% csrf_token %}<input type="hidden" name="action" value="transfer-ownership"><input type="hidden" name="return_to" value="{{ manage_return_to|default:"dashboard" }}"><input type="hidden" name="return_tab" value="ownership"><div class="field"><label for="new-owner-{{ org.slug }}">New owner</label><select id="new-owner-{{ org.slug }}" name="membership_id" required>{% for member in org.dashboard_transfer_targets %}<option value="{{ member.pk }}">{{ member.user.email|default:member.user.username }} · {{ member.get_role_display }}</option>{% endfor %}</select></div><button type="submit" class="button secondary" onclick="return confirm('Transfer organization ownership to this member?')">Transfer ownership</button></form>{% else %}<p class="muted">Add another member first. Ownership can only be transferred to an existing member.</p>{% endif %}
+        {% if org.dashboard_transfer_targets %}<form method="post" action="{% url 'organizations:settings' org.slug %}" class="row lifecycle-form">{% csrf_token %}<input type="hidden" name="action" value="transfer-ownership"><input type="hidden" name="return_to" value="{{ manage_return_to|default:"dashboard" }}"><input type="hidden" name="return_tab" value="members"><div class="field"><label for="new-owner-{{ org.slug }}">New owner</label><select id="new-owner-{{ org.slug }}" name="membership_id" required>{% for member in org.dashboard_transfer_targets %}<option value="{{ member.pk }}">{{ member.user.email|default:member.user.username }} · {{ member.get_role_display }}</option>{% endfor %}</select></div><button type="submit" class="button secondary" onclick="return confirm('Transfer organization ownership to this member?')">Transfer ownership</button></form>{% else %}<p class="muted">Add another member first. Ownership can only be transferred to an existing member.</p>{% endif %}
       {% else %}<p class="muted">Only the organization owner can transfer ownership.</p>{% endif %}
+      </section>
     </section>
 
     <section class="manage-tab-panel" role="tabpanel" data-manage-panel="lifecycle" hidden>

@@ -1,0 +1,10 @@
+{% for node in nodes %}
+  {% if node.is_group %}
+    <section class="definition-preview-group{% if not node.show_frame %} is-frameless{% endif %}" data-layout="{{ node.layout }}">
+      {% if node.show_frame %}<h3>{{ node.label }}</h3>{% endif %}
+      <div class="definition-preview-children">{% include "organizations/partials/form_preview_nodes.html" with nodes=node.children only %}</div>
+    </section>
+  {% else %}
+    <article class="field-definition definition-preview-field"><strong>{{ node.field.label }}</strong><div class="form-definition-meta"><span>{{ node.field.type|default:"text" }}</span>{% if node.field.type != 'image' and node.field.type != 'paragraph' and node.field.type != 'heading' %}<span>{% if node.field.required %}Required{% else %}Optional{% endif %}</span>{% endif %}</div>{% if node.field.options %}<p class="muted">Options: {{ node.field.options|join:", " }}</p>{% endif %}</article>
+  {% endif %}
+{% empty %}<p class="muted">No questions added yet.</p>{% endfor %}

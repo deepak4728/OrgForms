@@ -33,6 +33,40 @@ class DatasetFoundationTests(TestCase):
         self.form = self.collection()
         self.url = reverse('forms:public-form', args=[self.org.slug, self.form.slug])
 
+    def test_library_editors_render_embedded_in_popup(self):
+        from .models import UIElement
+        element = UIElement.objects.create(organization=self.org, name="Contact", schema=copy.deepcopy(SCHEMA))
+        for route, args in [("datasets:element-edit", [self.org.slug, element.pk]), ("datasets:edit", [self.org.slug, self.dataset.pk])]:
+            response = self.client.get(reverse(route, args=args), {"dialog": "1"})
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, 'embedded-page')
+            self.assertEqual(response.headers.get("X-Frame-Options"), "SAMEORIGIN")
+        response = self.client.get(reverse("datasets:library", args=[self.org.slug]), {"view": "elements"})
+        self.assertContains(response, 'data-library-editor="Edit UI element"')
+        self.assertContains(response, 'id="library-editor-dialog"')
+
+    def test_element_delete_confirmation_and_scope(self):
+        from .models import UIElement
+        element = UIElement.objects.create(organization=self.org, name='Disposable', schema=copy.deepcopy(SCHEMA))
+        url = reverse('datasets:element-edit', args=[self.org.slug, element.pk]) + '?dialog=1'
+        response = self.client.post(url, {'action': 'delete', 'confirm_name': 'wrong'})
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(UIElement.objects.filter(pk=element.pk).exists())
+        self.assertContains(response, 'Save element', status_code=400)
+        self.assertContains(response, 'id="delete-element-name"', count=1, status_code=400)
+        self.client.force_login(self.member)
+        self.assertEqual(self.client.post(url, {'action': 'delete', 'confirm_name': 'Disposable'}).status_code, 403)
+        self.client.force_login(self.owner)
+        response = self.client.post(url, {'action': 'delete', 'confirm_name': 'Disposable'})
+        self.assertContains(response, 'orgforms:library-saved')
+        self.assertFalse(UIElement.objects.filter(pk=element.pk).exists())
+
+    def test_prebuilt_field_can_be_customized_without_changing_default(self):
+        response = self.client.get(reverse('datasets:element-new', args=[self.org.slug]), {'prebuilt': 'radio', 'dialog': '1'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['form'].instance.schema['fields'][0]['type'], 'radio')
+        self.assertEqual(response.context['form'].instance.schema['fields'][0]['options'], ['Option 1', 'Option 2'])
+
     def collection(self, title='Registration', source='full_name'):
         return DynamicForm.objects.create(organization=self.org, title=title, schema={'fields':[{'id':source,'label':'Your name','type':'text','required':True}]}, destination_schema=self.dataset.current_schema, field_mapping={source:'name'}, status='active', visibility='public')
 
@@ -49,6 +83,42 @@ class DatasetFoundationTests(TestCase):
 
     def grant(self, **flags):
         return DatasetGrant.objects.create(dataset=self.dataset,membership=self.membership,**{'can_'+key:value for key,value in flags.items()})
+
+    def test_dataset_reader_cannot_discover_restricted_connected_forms(self):
+        self.form.title = 'Confidential intake workflow'
+        self.form.visibility = 'restricted'
+        self.form.save()
+        self.grant(read=True)
+        self.client.force_login(self.member)
+        url = reverse('datasets:detail', args=[self.org.slug, self.dataset.pk])
+        self.assertNotContains(self.client.get(url), self.form.title)
+        self.form.allowed_users.add(self.member)
+        self.assertContains(self.client.get(url), self.form.title)
+
+    def test_library_write_only_member_can_complete_record_creation(self):
+        self.grant(write=True)
+        self.client.force_login(self.member)
+        library = reverse('datasets:library', args=[self.org.slug])
+        create_url = reverse('datasets:record-new', args=[self.org.slug, self.dataset.pk])
+        self.assertContains(self.client.get(library), create_url)
+        page = self.client.get(create_url)
+        form = page.context['form']
+        payload = {**form.initial, 'value_name': 'New registration', 'value_note': ''}
+        payload.pop('expected_version')
+        response = self.client.post(create_url, payload)
+        self.assertRedirects(response, library)
+        self.assertEqual(self.dataset.records.get().data['name'], 'New registration')
+        self.assertEqual(self.client.get(reverse('datasets:detail', args=[self.org.slug, self.dataset.pk])).status_code, 403)
+        self.dataset.is_archived = True
+        self.dataset.save()
+        self.assertNotContains(self.client.get(library), create_url)
+
+    def test_library_hides_record_creation_for_archived_organization(self):
+        self.org.is_archived = True
+        self.org.save()
+        create_url = reverse('datasets:record-new', args=[self.org.slug, self.dataset.pk])
+        for name in ('library', 'list'):
+            self.assertNotContains(self.client.get(reverse('datasets:' + name, args=[self.org.slug])), create_url)
 
     def test_library_counts_respect_organization_and_access(self):
         catalog = Catalog.objects.create(organization=self.org, name='Items')

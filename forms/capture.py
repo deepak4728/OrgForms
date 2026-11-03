@@ -181,8 +181,8 @@ def capture_submission(*, form_id, user, owner_hash, payload, uploads=None,
             else:
                 submission.version += 1
             submission.data = data
-            submission.respondent_name = str(payload.get("respondent_name", ""))[:200]
-            submission.respondent_email = str(payload.get("respondent_email", ""))[:254]
+            submission.respondent_name = str(payload.get("respondent_name", submission.respondent_name))[:200]
+            submission.respondent_email = str(payload.get("respondent_email", submission.respondent_email))[:254]
             submission.save()
             selections = save_item_selections(form, submission, data, payload, schema=schema)
             if selections:

@@ -27,6 +27,18 @@ class FormAccessTests(TestCase):
             schema={"fields": [{"id": "note", "label": "Note", "type": "text", "required": True}]},
         )
 
+    def test_custom_form_edit_access_is_independent_of_roles(self):
+        from organizations.permissions import can_manage_form
+        self.client.force_login(self.owner)
+        response = self.client.put(reverse('forms:api-form-editors', args=[self.form.pk]), json.dumps({'editors':[self.member.pk], 'custom_edit_access':True}), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.form.refresh_from_db()
+        self.assertTrue(can_manage_form(self.member, self.form))
+        self.assertFalse(can_manage_form(self.manager, self.form))
+        self.assertTrue(can_manage_form(self.owner, self.form))
+        self.client.force_login(self.manager)
+        self.assertEqual(self.client.get(reverse('forms:form-edit', args=[self.org.slug,self.form.pk])).status_code, 403)
+
     def form_url(self):
         return reverse("forms:public-form", args=(self.org.slug, self.form.slug))
 

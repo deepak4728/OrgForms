@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}OrgForms · Forms for local organizations{% endblock %}
+{% block title %}OrgForms · Forms, Library and team workflows{% endblock %}
 {% block head %}
 <style>
   .product-landing{--landing-border:var(--line);--landing-card:var(--surface);width:min(1120px,100%);margin:0 auto}
@@ -170,40 +170,47 @@
   @media(max-width:760px){.landing-hero{margin:42px auto 54px}.landing-section{margin:34px 0;padding:20px 28px 26px;scroll-margin-top:106px}.landing-section-head{align-items:flex-start;flex-direction:column;gap:8px}.landing-section-head>div,.landing-section-head p{width:100%;flex:0 1 auto;max-width:100%}.demo-shell{grid-template-columns:1fr;padding:14px}.demo-copy{padding:4px}.blueprint-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.mvp-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.architecture-grid{grid-template-columns:1fr}.role-intro,.blueprint-toolbar,.ledger-head{align-items:flex-start;flex-direction:column}.blueprint-toolbar{width:100%}.filter-tabs[aria-label="Filter sample blueprints"]{max-width:100%}.architecture-list{grid-template-columns:1fr 1fr}.workflow-track{grid-template-columns:repeat(2,minmax(0,1fr))}.workflow-motion{padding:14px}.landing-footer-main{grid-template-columns:repeat(2,minmax(0,1fr));gap:24px}}
   @media(max-width:520px){.landing-hero h1{font-size:42px}.landing-lede{font-size:13px}.landing-proof{gap:9px 14px}.demo-toolbar{align-items:flex-start;flex-direction:column}.demo-fields{grid-template-columns:1fr}.demo-field.wide{grid-column:auto}.blueprint-grid,.mvp-grid{grid-template-columns:1fr}.mvp-card{min-height:0}.mvp-card h3{margin-top:12px}.blueprint-card{min-height:170px}.ledger-search{width:100%}.ledger-actions{width:100%}.workflow-track{grid-template-columns:1fr}.workflow-step{min-height:0}.workflow-motion-foot{align-items:flex-start;flex-direction:column}.landing-footer-main{grid-template-columns:1fr 1fr;gap:20px 14px}.landing-footer-brand{grid-column:1/-1}.landing-footer-bottom{align-items:flex-start;flex-direction:column;gap:5px}}
   @media(prefers-reduced-motion:reduce){.landing-reveal,.workflow-step,.workflow-pulse span,.landing-chip,.demo-tab,.blueprint-card,.blueprint-card::before,.blueprint-card::after,.landing-section,.landing-section::before,.landing-section::after{transition:none}.landing-reveal,.landing-section.landing-reveal.is-passed,.landing-section.landing-reveal.is-active{opacity:1;filter:none;transform:none}.landing-section::before,.landing-section::after{display:none}.blueprint-card.is-swapping{animation:none}}
+/* A quiet, readable product walkthrough. */
+.landing-section{padding:28px 0;margin:24px 0;border-top:1px solid var(--line)}
+.landing-section::before,.landing-section::after{display:none}
+.landing-reveal,.landing-section.landing-reveal.is-passed{opacity:1;transform:none;filter:none}
+.landing-section-nav{position:static;background:var(--surface);backdrop-filter:none;border-radius:10px;flex-wrap:wrap;justify-content:center}
+.landing-nav-indicator{background:var(--surface-soft);box-shadow:none;border-color:var(--line)}
+.mvp-card,.blueprint-card,.architecture-card,.workflow-motion,.demo-shell,.role-card,.landing-endcap{box-shadow:none;background:var(--surface)}
+.mvp-card{min-height:0;border-radius:8px;padding:18px}
+.mvp-card h3{margin-top:10px}
+.mvp-card p,.architecture-card p{font-size:13px;line-height:1.65}
+.workflow-step[aria-current="step"]{box-shadow:none;border-color:var(--line-strong)}
+.landing-hero{margin:40px auto 44px}
+.landing-hero h1{letter-spacing:-.055em;font-size:clamp(36px,6vw,64px)}
+.landing-proof{font-size:12px;gap:12px 20px}
+@media(max-width:560px){.landing-section{padding:24px 0}.landing-section-nav{gap:2px}.landing-section-nav a{padding:8px;font-size:11px}.landing-hero{margin:24px auto 32px}.landing-proof{justify-content:flex-start;text-align:left}.mvp-grid{grid-template-columns:1fr}}
 </style>
 {% endblock %}
 {% block content %}
 <div class="product-landing">
   <section class="landing-hero">
-    <p class="landing-kicker">The OrgForms MVP · Organization-owned ordering</p>
-    <h1>Less typing.<br><span>More thoughtful service.</span></h1>
-    <p class="landing-lede">A local-first ordering system for cafes and restaurants: AI that handles routine inputs on-device, structured workflows for complex tasks, and ordering that stays available across your organization’s network.</p>
-    <div class="landing-actions"><a class="landing-button" href="{% url 'accounts:signup' %}">Create your organization <span aria-hidden="true">↗</span></a><a class="landing-button secondary" href="#mvp">Explore the MVP <span aria-hidden="true">↓</span></a></div>
-    <div class="landing-proof"><span>On-device Qwen 3.5 4B</span><span>One-box input</span><span>Local Wi-Fi ordering</span><span>QR and barcode flows</span></div>
+    <p class="landing-kicker">OrgForms · Forms for your organization</p>
+    <h1>Your forms.<br><span>Your way of working.</span></h1>
+    <p class="landing-lede">Build forms from reusable fields, collect responses, and keep your team’s information together. Start manually or draft with a local AI model, then review before publishing.</p>
+    <div class="landing-actions">{% if user.is_authenticated %}<a class="landing-button" href="{% url 'organizations:dashboard' %}">Open workspace <span aria-hidden="true">↗</span></a>{% else %}<a class="landing-button" href="{% url 'accounts:signup' %}">Get started <span aria-hidden="true">↗</span></a>{% endif %}<a class="landing-button secondary" href="#mvp">Explore the product <span aria-hidden="true">↓</span></a></div>
+    <div class="landing-proof"><span>Reusable UI elements</span><span>Library items and datasets</span><span>Form-level access</span><span>Optional local AI</span></div>
   </section>
 
-  <nav class="landing-section-nav" aria-label="Explore OrgForms"><span class="landing-nav-indicator" aria-hidden="true"></span><a href="#mvp">MVP</a><a href="#live-demo">Form sandbox</a><a href="#roles-heading">Team access</a><a href="#blueprints-heading">Blueprints</a><a href="#ledger-heading">Submissions</a><a href="#architecture-heading">AI workflow</a></nav>
+  <nav class="landing-section-nav" aria-label="Explore OrgForms"><span class="landing-nav-indicator" aria-hidden="true"></span><a href="#mvp">Overview</a><a href="#live-demo">Form sandbox</a><a href="#roles-heading">Team access</a><a href="#blueprints-heading">Blueprints</a><a href="#ledger-heading">Submissions</a><a href="#architecture-heading">AI workflow</a></nav>
 
   <section class="landing-section" id="mvp" aria-labelledby="mvp-heading">
-    <div class="landing-section-head"><div><p class="section-kicker">The MVP · Six product building blocks</p><h2 id="mvp-heading">AI and ordering designed around the organization.</h2></div><p>Keep everyday work fast and local. Use carefully structured models and network options for the tasks that need them.</p></div>
-    <div class="mvp-grid">
-      <article class="mvp-card"><span class="mvp-index">01 · LOCAL INFERENCE</span><h3>Fast reasoning on-device</h3><p>Run Qwen 3.5 4B locally for routine questions, basic reasoning, and analytics, keeping common work responsive and cost-efficient.</p></article>
-      <article class="mvp-card"><span class="mvp-index">02 · FRONTIER ROUTING</span><h3>Cloud models for heavier jobs</h3><p>Connect provider APIs for high-complexity or scheduled tasks, so larger model calls are used where they add value.</p></article>
-      <article class="mvp-card"><span class="mvp-index">03 · SYSTEM 1</span><h3>Write it once; classify the input</h3><p>Accept a single-box message, map its values to the form schema, and attach a confidence probability to each field.</p></article>
-      <article class="mvp-card"><span class="mvp-index">04 · SYSTEM 2</span><h3>Create with strict schemas</h3><p>Use a stronger structured workflow for organization and form creation, producing schema-following output that can be reviewed before use.</p></article>
-      <article class="mvp-card"><span class="mvp-index">05 · ORGANIZATION DEPLOYMENT</span><h3>Run on the organization’s network</h3><p>Deploy for each organization over its Wi-Fi. Keep ordering on the local network during internet outages, or expose the service publicly through configured port forwarding.</p></article>
-      <article class="mvp-card"><span class="mvp-index">06 · QR + BARCODE</span><h3>Scan into a simpler order</h3><p>Use QR codes and barcodes to connect guests to menus, items, or tables with less manual entry and more attention on the cafe experience.</p></article>
-    </div>
+    <div class="landing-section-head"><div><h2 id="mvp-heading">From reusable fields to useful responses.</h2></div><p>One workflow for libraries, teams, events, shops and other organizations.</p></div><div class="mvp-grid"><article class="mvp-card"><span class="mini-label">Workspace</span><h3>Give each organization its own space</h3><p>Manage forms, members and departments with access scoped to your organization.</p></article><article class="mvp-card"><span class="mini-label">Form builder</span><h3>Combine fields into useful forms</h3><p>Use short answers, choices, numbers, dates and static content. Review questions and settings before publishing.</p></article><article class="mvp-card"><span class="mini-label">UI elements</span><h3>Build once, reuse as a group</h3><p>Create custom groups from prebuilt fields, then add them to forms. Start with an order, event or appointment template.</p></article><article class="mvp-card"><span class="mini-label">Library</span><h3>Connect reusable information</h3><p>Keep datasets and selectable items in one place. Item cards use current availability, quantity limits and item-specific choices.</p></article><article class="mvp-card"><span class="mini-label">Submissions</span><h3>Review every response</h3><p>Filter records, inspect answers and response history, view trends, and export CSV.</p></article><article class="mvp-card"><span class="mini-label">Local AI</span><h3>Draft with a model you choose</h3><p>Use installed Ollama models to draft forms and organizations. Choose what context to share in AI Hub.</p></article></div>
   </section>
 
   <section class="landing-section" id="workflow-motion" aria-labelledby="workflow-motion-title">
     <div class="landing-section-head"><div><p class="section-kicker">How the pieces work together</p><h2 id="workflow-motion-title">A request moves from capture to action.</h2></div><p>Follow a submission through the OrgForms workflow. Select a stage or let the walkthrough play.</p></div>
     <div class="workflow-motion" data-workflow-motion>
       <div class="workflow-track" role="group" aria-label="OrgForms workflow stages">
-        <button class="workflow-step" type="button" data-workflow-step="0" aria-current="step"><span class="mini-label">01 · Capture</span><b>Collect the request</b><small>People submit a focused form or speak a short instruction.</small></button>
-        <button class="workflow-step" type="button" data-workflow-step="1"><span class="mini-label">02 · Structure</span><b>Map details to fields</b><small>System 1 classifies known inputs; System 2 drafts strict schemas.</small></button>
+        <button class="workflow-step" type="button" data-workflow-step="0" aria-current="step"><span class="mini-label">01 · Capture</span><b>Collect the request</b><small>People complete a focused form with the fields you chose.</small></button>
+        <button class="workflow-step" type="button" data-workflow-step="1"><span class="mini-label">02 · Structure</span><b>Map details to fields</b><small>Validated fields keep responses structured and reviewable.</small></button>
         <button class="workflow-step" type="button" data-workflow-step="2"><span class="mini-label">03 · Review</span><b>Check the record</b><small>Teams filter, approve, and export submissions with context.</small></button>
-        <button class="workflow-step" type="button" data-workflow-step="3"><span class="mini-label">04 · Improve</span><b>Reuse trusted details</b><small>Saved preferences and organization sources support the next request.</small></button>
+        <button class="workflow-step" type="button" data-workflow-step="3"><span class="mini-label">04 · Improve</span><b>Reuse trusted details</b><small>Reuse Library fields and groups in your next form.</small></button>
       </div>
       <div class="workflow-pulse" aria-hidden="true"><span data-workflow-progress></span></div>
       <div class="workflow-motion-foot"><span data-workflow-caption>Capture a request once and keep the original submission available for review.</span><button class="button secondary" type="button" data-workflow-play aria-pressed="true">Pause walkthrough</button></div>
@@ -274,28 +281,28 @@
   </section>
 
   <section class="landing-section" aria-labelledby="architecture-heading">
-    <div class="landing-section-head"><div><p class="section-kicker">AI architecture · Local first, schema guided</p><h2 id="architecture-heading">Use the smallest model that fits the task.</h2></div><p>Keep routine inference on the organization’s device and reserve provider APIs for the work that benefits from a frontier model.</p></div>
-    <div class="architecture-grid"><article class="architecture-card"><span class="mini-label">Two inference paths</span><h3>Fast capture, careful creation.</h3><p>System 1 classifies a short text input against a known form schema and returns a confidence score for each field. System 2 handles organization and form creation with strict structured output.</p><div class="architecture-list"><div class="architecture-item"><b>On-device</b><span>Qwen 3.5 4B for everyday reasoning and analytics.</span></div><div class="architecture-item"><b>Provider APIs</b><span>Scheduled or high-complexity model tasks.</span></div><div class="architecture-item"><b>Schema checks</b><span>Review structured output before publishing.</span></div></div></article><article class="architecture-card"><span class="mini-label">Organization control</span><h3>Keep ordering close to the team.</h3><p>Organization deployments can serve guests over local Wi-Fi, with public access available through configured port forwarding. The local ordering path can continue when internet access is unavailable.</p><div class="architecture-code">Text input → schema classification + field confidence<br>Form or organization setup → strict structured output<br>Guest order → QR/barcode → organization network</div></article></div>
+    <div class="landing-section-head"><div><h2 id="architecture-heading">AI assistance, with a review step.</h2></div><p>Use local Ollama models when you need help. Build and manage forms manually whenever you prefer.</p></div>
+    <div class="architecture-grid"><article class="architecture-card"><h3>Describe, draft, review.</h3><p>Describe your organization or form, select an installed model, and review the structured draft. Thinking is enabled for creation when the model supports it.</p></article><article class="architecture-card"><h3>Choose the context.</h3><p>AI Hub lets you select context, model and context-window settings. Review suggestions against your source records; model output can be incorrect.</p></article></div>
   </section>
 
   <section class="landing-section" aria-labelledby="faq-heading"><div class="landing-section-head"><div><p class="section-kicker">Help center · Frequently asked questions</p><h2 id="faq-heading">A few useful details.</h2></div><p>Learn how organizations, forms, and submissions fit together.</p></div>
     <div class="faq-list">
       <details><summary>Can someone fill out a form without an account?</summary><p>Yes. A published form can be shared with anyone who has its link. Organization membership stays private, and public respondents only see the form and submit their response.</p></details>
       <details><summary>How are organizations kept separate?</summary><p>Organization pages and records check the signed-in account’s membership. A person in one organization does not get access to another organization’s forms, documents, or chat history.</p></details>
-      <details><summary>Can I edit a form after creating it?</summary><p>Yes. Admins and managers can edit organization forms. AI suggestions are a starting point, and you can adjust fields and validation before publishing.</p></details>
+      <details><summary>Can I edit a form after creating it?</summary><p>Yes. Authorized form editors can update questions and settings. AI suggestions are a starting point, and you can adjust fields and validation before publishing.</p></details>
       <details><summary>Can I export submissions?</summary><p>Submission exports are available from the organization’s submissions area. The button above exports sample data only, so you can preview the CSV format.</p></details>
-      <details><summary>How are local and cloud models used?</summary><p>Qwen 3.5 4B handles routine inference on-device. Configured provider APIs are reserved for higher-complexity or scheduled work, while schema checks keep generated forms and organization setup structured.</p></details>
-      <details><summary>Can orders work when internet access is down?</summary><p>When the organization deployment and guest device share its Wi-Fi, the local ordering flow can remain available without an internet connection. Public access can be enabled separately through configured port forwarding.</p></details>
+      <details><summary>Do I need AI to create a form?</summary><p>No. You can build manually from prebuilt fields and custom UI groups. Local AI drafting requires a running Ollama service and an installed model.</p></details>
+      <details><summary>Do custom groups change existing forms automatically?</summary><p>Groups are copied into a form when added, so library edits do not silently rewrite published questions. Library item availability is checked against current catalog data.</p></details>
     </div>
   </section>
 
-  <section class="landing-endcap"><p class="section-kicker">Make work easier to follow</p><h2>Keep requests, people, and decisions connected.</h2><p>Give each organization a clear home for its forms, response history, departments, and trusted AI context.</p><div class="landing-actions">{% if user.is_authenticated %}<a class="landing-button" href="{% url 'organizations:dashboard' %}">Open dashboard <span aria-hidden="true">↗</span></a><a class="landing-button secondary" href="{% url 'chat:chat' %}">Open AI Hub</a>{% else %}<a class="landing-button" href="{% url 'accounts:signup' %}">Create your organization <span aria-hidden="true">↗</span></a><a class="landing-button secondary" href="{% url 'accounts:login' %}">Sign in</a>{% endif %}</div></section>
+  <section class="landing-endcap"><p class="section-kicker">Make work easier to follow</p><h2>Keep requests, people, and decisions connected.</h2><p>Give each organization a clear home for its forms, response history, departments, and trusted AI context.</p><div class="landing-actions">{% if user.is_authenticated %}<a class="landing-button" href="{% url 'organizations:dashboard' %}">Open workspace <span aria-hidden="true">↗</span></a><a class="landing-button secondary" href="{% url 'chat:chat' %}">Open AI Hub</a>{% else %}<a class="landing-button" href="{% url 'accounts:signup' %}">Create your organization <span aria-hidden="true">↗</span></a><a class="landing-button secondary" href="{% url 'accounts:login' %}">Sign in</a>{% endif %}</div></section>
   <footer class="landing-footer" id="site-footer" aria-label="Site footer">
     <div class="landing-footer-main">
       <div class="landing-footer-brand"><strong>OrgForms</strong><p>Clearer forms and workflows for local teams. Keep requests, people, and decisions connected.</p></div>
       <nav class="landing-footer-group" aria-label="Explore OrgForms"><h2>Explore</h2><ul><li><a href="#mvp">Product overview</a></li><li><a href="#live-demo">Form sandbox</a></li><li><a href="#blueprints-heading">Form blueprints</a></li><li><a href="#architecture-heading">AI workflow</a></li></ul></nav>
       <nav class="landing-footer-group" aria-label="Organization tools"><h2>Organization tools</h2><ul><li><a href="#roles-heading">Team access</a></li><li><a href="#ledger-heading">Submission preview</a></li><li><a href="#faq-heading">Help and FAQs</a></li></ul></nav>
-      <nav class="landing-footer-group" aria-label="Your workspace"><h2>Your workspace</h2><ul>{% if user.is_authenticated %}<li><a href="{% url 'organizations:dashboard' %}">Open dashboard</a></li><li><a href="{% url 'chat:chat' %}">Open AI Hub</a></li>{% else %}<li><a href="{% url 'accounts:signup' %}">Create an organization</a></li><li><a href="{% url 'accounts:login' %}">Sign in</a></li>{% endif %}</ul></nav>
+      <nav class="landing-footer-group" aria-label="Your workspace"><h2>Your workspace</h2><ul>{% if user.is_authenticated %}<li><a href="{% url 'organizations:dashboard' %}">Open workspace</a></li><li><a href="{% url 'chat:chat' %}">Open AI Hub</a></li>{% else %}<li><a href="{% url 'accounts:signup' %}">Create an organization</a></li><li><a href="{% url 'accounts:login' %}">Sign in</a></li>{% endif %}</ul></nav>
     </div>
     <div class="landing-footer-bottom"><span>© 2026 OrgForms</span><span>Forms, submissions, and organization context in one place.</span></div>
   </footer>

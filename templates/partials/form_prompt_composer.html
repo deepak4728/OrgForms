@@ -1,8 +1,9 @@
 <div class="form-prompt-setup" data-local-creation data-compact="true" data-target="draft-prompt" data-organization="{{ organization.slug }}">
   <div class="form-prompt-composer">
-    <textarea id="draft-prompt" rows="3" maxlength="4000" aria-label="Describe your form" placeholder="e.g. Register workshop attendees with name, email, session choice, and accessibility needs."></textarea>
+    <textarea id="draft-prompt" rows="3" maxlength="4000" aria-label="Describe your form" placeholder="Create exactly 3 named groups: Personal details (name, email, phone); Seat booking (seat number and orientation); Item selection (show current Library item images, names and descriptions, with Add/remove quantity controls). Display item details, do not ask respondents to enter or upload them."></textarea>
     <div class="form-prompt-toolbar"><button type="button" id="draft-form">Draft form <span aria-hidden="true">↑</span></button></div>
   </div>
+  <button type="button" class="button tertiary" data-prompt-preset="Create a form with exactly three separate named groups: Personal details with name, email and phone; Seat booking with seat number and orientation; Item selection displaying current Library items as image cards with names, descriptions and Add/remove quantity controls. Use creator-supplied item details, not respondent text inputs or uploads. Keep each group as one component.">Use three-group example</button>
   <div class="builder-prompt-actions">
     <div class="form-prompt-models"><label>Model <select data-creation-model aria-label="Model for form drafting"><option value="">Loading models…</option></select></label></div>
     <button type="button" class="button tertiary" data-step-next="structure" data-prompt-manual>Build manually</button>

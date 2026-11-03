@@ -53,7 +53,7 @@ class DynamicFormSerializer(serializers.ModelSerializer):
         return []
 
     def validate_slug(self, value):
-        if value in {"settings", "people", "menu", "submissions", "forms", "data"}:
+        if value in DynamicForm.RESERVED_SLUGS:
             raise serializers.ValidationError("This link name is reserved for workspace pages.")
         return value
 
@@ -111,14 +111,21 @@ class FormSubmissionSerializer(serializers.ModelSerializer):
 
 
 class CatalogItemSerializer(serializers.ModelSerializer):
+    catalog_name = serializers.CharField(source='catalog.name', read_only=True)
+    catalog_id = serializers.IntegerField(read_only=True)
     class Meta:
         model = CatalogItem
         fields = (
             "id",
+            "catalog_id",
+            "catalog_name",
             "name",
             "category",
             "description",
             "barcode",
+            "image_url",
+            "options",
+            "stock",
             "price",
             "is_available",
         )
@@ -132,9 +139,30 @@ class CatalogItemCreateSerializer(serializers.ModelSerializer):
             "category",
             "description",
             "barcode",
+            "image_url",
+            "options",
+            "stock",
             "price",
             "is_available",
         )
+
+    def validate_image_url(self, value):
+        if value and not value.startswith("https://"):
+            raise serializers.ValidationError("Use an HTTPS image URL.")
+        return value
+
+    def validate_options(self, value):
+        import json
+        from .item_options import validate_options
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                raise serializers.ValidationError("Enter valid option JSON.")
+        try:
+            return validate_options(value)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError(error.messages)
 
     def validate_price(self, value):
         if value < 0:

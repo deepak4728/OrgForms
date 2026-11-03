@@ -133,3 +133,21 @@ class RecordCommandReceipt(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=("dataset", "actor", "key"), name="unique_record_command_receipt")]
+
+class UIElement(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey('organizations.Organization', on_delete=models.CASCADE, related_name='ui_elements')
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    schema = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ('name',)
+        constraints = [models.UniqueConstraint(fields=('organization', 'name'), name='unique_ui_element_name_per_org')]
+
+    def clean(self):
+        from forms.services import validate_form_schema
+        validate_form_schema(self.schema)
+        if any(field['type'] not in {'text','textarea','number','email','tel','select','radio','date','checkbox','rating','file','multiselect','time','heading','paragraph','image','item_cards'} for field in self.schema['fields']):
+            raise ValidationError('UI elements use basic input fields. Add library bindings in the form builder.')

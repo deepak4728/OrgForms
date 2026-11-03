@@ -36,7 +36,7 @@ from forms.models import DynamicForm, FormSubmission, SubmissionAttachment, Cata
 from forms.forms import FormAccessSettingsForm
 from forms.capture import CaptureError, capture_submission, change_submission_status
 from forms.serializers import DynamicFormSerializer, CatalogItemCreateSerializer
-from ai_gateway.classification import classify_text
+from ai_gateway.classification import classify_text, suggest_field_values
 from forms.services import validate_form_schema, normalize_schema
 from accounts.models import UserPortfolio
 from ai_gateway.models import AIConfiguration
@@ -113,6 +113,12 @@ def form_editor(request, org_slug, form_id=None):
             "revision": revision,
             "base_revision_value": request.POST.get("base_revision", str(revision.pk) if revision else ""),
             "dataset_choices": dataset_choices, "lookup_choices": lookup_choices,
+            "ui_elements": list(organization.ui_elements.values('id', 'name', 'schema')) if can_manage_access else [],
+            "available_item_count": CatalogItem.objects.filter(
+                catalog__organization=organization,
+                catalog_id=Catalog.objects.filter(organization=organization).order_by("pk").values("pk")[:1],
+                is_available=True,
+            ).count(),
             "destination_value": request.POST.get("destination_schema", str(instance.destination_schema_id) if instance and instance.destination_schema_id else ""),
             "mapping_text": request.POST.get("field_mapping", json.dumps(instance.field_mapping if instance else {})),
             "restaurant_order": (request.POST.get("include_items") == "on" or request.POST.get("restaurant_order") == "on") if request.method == "POST" else any(field.get("type") == "item_cards" for field in initial_schema.get("fields", [])),
@@ -237,6 +243,9 @@ def menu_editor(request, org_slug):
                 "category": request.POST.get("category", "General").strip() or "General",
                 "description": request.POST.get("description", "").strip(),
                 "price": request.POST.get("price", "").strip(),
+                "options": request.POST.get("options", "[]"),
+                "image_url": request.POST.get("image_url", "").strip(),
+                "stock": request.POST.get("stock") or None,
                 "is_available": True,
             })
             if not serializer.is_valid():
@@ -332,7 +341,7 @@ def public_form(request, org_slug, form_slug):
         initial_record = {"id": str(record.pk), "version": record.version,
                           "data": {source: record.data[target] for source, target in revision.field_mapping.items() if target in record.data}}
     field_catalogs = {field["id"]: field["catalog_id"] for field in schema["fields"] if field["type"] == "item_cards"}
-    menu_items = list(CatalogItem.objects.filter(catalog_id__in=field_catalogs.values(), catalog__organization=organization, is_available=True).values("id", "catalog_id", "name", "category", "description", "price"))
+    menu_items = list(CatalogItem.objects.filter(catalog_id__in=field_catalogs.values(), catalog__organization=organization, is_available=True).values("id", "catalog_id", "name", "category", "description", "price", "options", "stock", "image_url"))
     return render(request, "forms/public_form.html", {
         "organization": organization, "form": form, "revision": revision,
         "initial_record": initial_record,
@@ -405,7 +414,12 @@ def api_form_editors(request, form_id):
     memberships = list(form.organization.memberships.filter(user__is_active=True, user_id__in=editor_ids).select_related("user"))
     if len(memberships) != len(editor_ids):
         return Response({"detail": "Every form editor must be an active member of this organization."}, status=400)
-    form.editors.set([item.user for item in memberships])
+    custom = request.data.get('custom_edit_access', form.custom_edit_access)
+    if not isinstance(custom, bool):
+        return Response({'detail': 'Choose a valid edit access mode.'}, status=400)
+    with transaction.atomic():
+        form.editors.set([item.user for item in memberships])
+        DynamicForm.objects.filter(pk=form.pk).update(custom_edit_access=custom)
     return Response({"success": True, "editors": [item.user.email or item.user.username for item in memberships]})
 
 
@@ -510,7 +524,7 @@ def api_public_classify(request, form_id):
             # Only user-entered profile facts are used. Personal document files are never read here.
             facts = {"phone_number": portfolio.phone_number, **(portfolio.profile_data or {})}
             text += "\n" + "; ".join(f"{key.replace('_', ' ')}: {value}" for key, value in facts.items() if value not in (None, "", [], {}))
-    return Response(classify_text(text, fields))
+    return Response(suggest_field_values(text, fields, AIConfiguration.for_organization(form.organization).default_model))
 
 
 @api_view(["POST"])
@@ -613,7 +627,7 @@ def api_form_draft(request, org_slug):
                 {"id": "workflow_details", "label": f"Details for {category.lower()} request", "type": "textarea", "required": True},
             ]}})
         return Response({"success": True, "source": "deterministic-template", "form": {
-            "title": prompt[:120], "description": prompt, "purpose": organization.purpose,
+            "title": prompt[:120], "description": prompt, "purpose": "",
             "fields": [{"id": "name", "label": "Name", "type": "text", "required": True},
                        {"id": "details", "label": "Details", "type": "textarea", "required": True}],
         }})
@@ -954,4 +968,4 @@ def catalog_items(request):
     organization = get_object_or_404(Organization, slug=request.headers.get("X-Organization") or request.GET.get("org") or request.session.get("active_organization_slug"))
     require_membership(request.user, organization)
     from .serializers import CatalogItemSerializer
-    return Response(CatalogItemSerializer(CatalogItem.objects.filter(catalog__organization=organization, is_available=True), many=True).data)
+    return Response(CatalogItemSerializer(CatalogItem.objects.select_related("catalog").filter(catalog__organization=organization, is_available=True), many=True).data)

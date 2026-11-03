@@ -1,16 +1,20 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 from django.urls import reverse
 
 from datasets.models import Dataset
 from forms.models import CatalogItem
 from organizations.models import Organization, OrganizationMembership
+from ai_gateway.models import AIConfiguration
 
 
 class LibraryDraftTests(TestCase):
     def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
         User = get_user_model()
         self.admin = User.objects.create_user('admin')
         self.member = User.objects.create_user('member')
@@ -21,6 +25,18 @@ class LibraryDraftTests(TestCase):
 
     def url(self, kind):
         return reverse('ai_gateway:library-draft', args=[self.org.slug, kind])
+
+    @patch('ai_gateway.creation_views.local_json')
+    def test_library_uses_workspace_default_and_allows_explicit_override(self, generate):
+        profile = AIConfiguration.for_organization(self.org)
+        profile.default_model = 'workspace-model'
+        profile.save()
+        generate.return_value = ({'name': 'Item', 'category': '', 'description': '', 'price': ''}, 'local', False, 'direct')
+        for selected in ('', 'chosen-model'):
+            response = self.client.post(self.url('item'), {'prompt': 'Item', 'model': selected, 'think': False}, content_type='application/json')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(generate.call_args.args[2], selected or 'workspace-model')
+            self.assertIs(generate.call_args.kwargs['think'], False)
 
     @patch('ai_gateway.creation_views.local_json')
     def test_item_is_a_reviewable_draft_without_an_invented_price(self, generate):

@@ -11,6 +11,11 @@ from urllib.error import URLError
 
 TYPES = ['text','textarea','number','email','tel','select','radio','date','checkbox','rating','file']
 FIELD_SCHEMA = {'type':'object','properties':{'id':{'type':'string'},'label':{'type':'string'},'type':{'type':'string','enum':TYPES},'required':{'type':'boolean'},'options':{'type':'array','items':{'type':'string'}},'max_length':{'type':'integer','minimum':1,'maximum':10000},'layout_width':{'type':'string','enum':['auto','third','half','full']}},'required':['id','label','type','required']}
+FIELD_SCHEMA['properties'].update({
+    'ui_group': {'type':'string'},
+    'ui_group_label': {'type':'string'},
+    'ui_group_layout': {'type':'string','enum':['grid','stack']},
+})
 FORM_SCHEMA = {'type':'object','properties':{'title':{'type':'string'},'description':{'type':'string'},'purpose':{'type':'string'},'fields':{'type':'array','items':FIELD_SCHEMA,'minItems':1,'maxItems':20}},'required':['title','description','purpose','fields']}
 ORG_SCHEMA = {'type':'object','additionalProperties':False,'properties':{'name':{'type':'string'},'description':{'type':'string'},'purpose':{'type':'string'},'business_type':{'type':'string','enum':[v for v,_ in Organization.TYPE_CHOICES]},'address':{'type':'string'},'phone':{'type':'string'},'email':{'type':'string'},'initial_form':FORM_SCHEMA},'required':['name','description','purpose','business_type','address','phone','email']}
 
@@ -55,7 +60,11 @@ def local_json(prompt, system, model, schema, think=None):
             raw = response.read(256001)
         if len(raw)>256000:
             raise ValidationError('The model draft is too large. Try a shorter request.')
-        return json.loads(raw)['message']
+        result = json.loads(raw)
+        message = result.get('message') if isinstance(result, dict) else None
+        if not isinstance(message, dict) or not isinstance(message.get('content'), str):
+            raise ValidationError('The local model returned an invalid draft. Retry or continue with manual entry.')
+        return message
 
     message = generate(payload)
     mode = 'direct'
@@ -93,7 +102,7 @@ def clean_form_draft(value, *, catalog_ids=None, warnings=None):
     for field in value['fields']:
         if not isinstance(field,dict) or (field.get('type') not in TYPES and not (catalog_ids is not None and field.get('type') == 'item_cards')):
             raise ValidationError('The model returned an unsupported question type.')
-        safe = {k:field[k] for k in ('id','label','type','required','options','min','max','catalog_id','max_length','layout_width') if k in field}
+        safe = {k:field[k] for k in ('id','label','type','required','options','min','max','catalog_id','max_length','layout_width','ui_group','ui_group_label','ui_group_layout') if k in field}
         if not isinstance(safe.get('label'),str) or len(safe['label'])>200:
             raise ValidationError('Question labels must be short text.')
         # IDs from generated drafts are internal identifiers, not user input.
@@ -130,7 +139,32 @@ def clean_form_draft(value, *, catalog_ids=None, warnings=None):
                 raise ValidationError('Choice questions need short text options.')
         else:
             safe.pop('options',None)
+        if safe.get('ui_group'):
+            raw_group = safe['ui_group']
+            group = re.sub(r'[^A-Za-z0-9_-]+','_',str(raw_group)).strip('_-') or 'component'
+            if not group[0].isalpha():
+                group='group_'+group
+            group=group[:80]
+            safe['ui_group']=group
+            label = safe.get('ui_group_label')
+            if not isinstance(label,str) or not label.strip():
+                label=group.replace('_',' ').replace('-',' ').strip().capitalize()
+            label=label[:200]
+
+            if safe.get('ui_group_layout','grid') not in ('grid','stack'):
+                raise ValidationError('Invalid component layout.')
+            safe['ui_group_label']=label.strip()
+            safe.setdefault('ui_group_layout','grid')
+        else:
+            for key in ('ui_group','ui_group_label','ui_group_layout'):
+                safe.pop(key,None)
         fields.append(safe)
+    group_names={}
+    for field in fields:
+        if field.get('ui_group'):
+            key=field['ui_group']
+            group_names.setdefault(key,field['ui_group_label'])
+            field['ui_group_label']=group_names[key]
     validate_form_schema({'fields':fields})
     title = value.get('title','')
     if not isinstance(title,str) or not title.strip() or len(title)>200:

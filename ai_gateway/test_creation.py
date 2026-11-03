@@ -3,6 +3,7 @@ from io import BytesIO
 from unittest.mock import patch
 from urllib.error import URLError
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import override_settings
 from rest_framework.test import APITestCase
 from organizations.models import Organization, OrganizationMembership
@@ -15,6 +16,8 @@ FORM = {'title':'Workshop registration','description':'Sign up for a workshop','
 @override_settings(OLLAMA_DEFAULT_MODEL='test-model')
 class LocalCreationTests(APITestCase):
     def setUp(self):
+        cache.clear()
+        self.addCleanup(cache.clear)
         capability = patch('ai_gateway.creation.thinking_capability', return_value=False)
         capability.start()
         self.addCleanup(capability.stop)
@@ -37,6 +40,16 @@ class LocalCreationTests(APITestCase):
 
     def output(self,draft):
         return BytesIO(json.dumps({'message':{'content':json.dumps(draft)}}).encode())
+
+    @patch('ai_gateway.creation.installed_models', return_value=['test-model'])
+    @patch('ai_gateway.creation.open_ollama_response')
+    def test_malformed_ollama_envelopes_return_actionable_errors(self, upstream, models):
+        for envelope in (None, [], {}, {'message': None}, {'message': []}, {'message': {'content': 42}}):
+            with self.subTest(envelope=envelope):
+                upstream.return_value = BytesIO(json.dumps(envelope).encode())
+                response = self.client.post('/api/creation/organization/', {'prompt': 'Create a research team'}, format='json')
+                self.assertEqual(response.status_code, 422)
+                self.assertIn('manual entry', response.data['detail'])
 
     @patch('ai_gateway.creation.installed_models',return_value=['test-model'])
     @patch('ai_gateway.creation.open_ollama_response')
@@ -351,3 +364,13 @@ class LocalCreationTests(APITestCase):
         upstream.return_value=self.output(draft)
         result=self.client.post(f'/api/creation/forms/{self.org.slug}/',{'prompt':'Limit the name to 20 characters'},format='json')
         self.assertEqual(result.data['form']['fields'][0]['max_length'],20)
+
+class GroupDraftNormalizationTests(APITestCase):
+    def test_missing_group_name_is_recovered(self):
+        from ai_gateway.creation import clean_form_draft
+        import copy
+        draft=copy.deepcopy(FORM)
+        draft['fields'][0]['ui_group']='Personal details'
+        result=clean_form_draft(draft)
+        self.assertEqual(result['fields'][0]['ui_group'],'Personal_details')
+        self.assertEqual(result['fields'][0]['ui_group_label'],'Personal details')

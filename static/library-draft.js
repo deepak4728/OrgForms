@@ -18,6 +18,7 @@
         if (panel.dataset.kind === 'item') {
           form.elements.category.value = draft.category;
           form.elements.price.value = '';
+          if(form.elements.options){form.elements.options.value = JSON.stringify(draft.options || []);form.elements.options.dispatchEvent(new Event('change'));}
           status.textContent = 'Review the item and enter its price before adding it.';
         } else {
           form.elements.schema.value = JSON.stringify(draft.schema, null, 2);

@@ -1,10 +1,10 @@
 import re
 import math
-from datetime import date
+from datetime import date, time
 from django.core.exceptions import ValidationError
 
 
-FIELD_TYPES = {"text", "textarea", "number", "email", "tel", "select", "radio", "date", "checkbox", "rating", "file", "item_cards", "record_reference"}
+FIELD_TYPES = {"text", "textarea", "number", "email", "tel", "select", "radio", "date", "checkbox", "rating", "file", "item_cards", "record_reference", "multiselect", "time", "heading", "paragraph", "image"}
 
 
 def validate_form_schema(schema):
@@ -15,6 +15,36 @@ def validate_form_schema(schema):
     if len(schema["fields"]) > 100:
         raise ValidationError("Use up to 100 fields per form.")
     seen = set()
+    group_paths = {}
+    for field in schema['fields']:
+        if not isinstance(field, dict):
+            continue
+        if field.get('ui_group_layout', 'grid') not in ('grid', 'stack', 'horizontal'):
+            raise ValidationError('Choose Grid, Horizontal or Vertical for group layout.')
+        if not isinstance(field.get('ui_group_show_frame', True), bool):
+            raise ValidationError('Group visibility must be true or false.')
+        path = field.get('ui_group_path', [])
+        if not isinstance(path, list) or len(path) > 5:
+            raise ValidationError('Use up to five parent groups.')
+        ids = []
+        for ancestor in path:
+            if not isinstance(ancestor, dict) or not isinstance(ancestor.get('id'), str) or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,79}', ancestor['id']) or not isinstance(ancestor.get('label'), str) or not ancestor['label'].strip() or len(ancestor['label']) > 200:
+                raise ValidationError('Each parent group needs a valid id and name.')
+            if not isinstance(ancestor.get('show_frame', True), bool):
+                raise ValidationError('Parent group visibility must be true or false.')
+            if ancestor.get('layout', 'grid') not in ('grid', 'stack', 'horizontal'):
+                raise ValidationError('Invalid parent group layout.')
+            if ancestor['id'] in ids or ancestor['id'] == field.get('ui_group'):
+                raise ValidationError('Groups cannot contain themselves.')
+            previous = group_paths.setdefault(ancestor['id'], tuple(ids))
+            if previous != tuple(ids):
+                raise ValidationError('A group must have one consistent parent.')
+            ids.append(ancestor['id'])
+        if field.get('ui_group'):
+            previous = group_paths.setdefault(field['ui_group'], tuple(ids))
+            if previous != tuple(ids):
+                raise ValidationError('A group must have one consistent parent.')
+
     for field in schema["fields"]:
         if not isinstance(field, dict):
             raise ValidationError("Each field must be an object.")
@@ -36,7 +66,7 @@ def validate_form_schema(schema):
             length = field["max_length"]
             if field.get("type") not in {"text", "textarea", "email", "tel"} or isinstance(length, bool) or not isinstance(length, int) or not 1 <= length <= 10000:
                 raise ValidationError(f"Field {field_id} needs a character limit between 1 and 10000 for a text field.")
-        if field.get("type") in {"select", "radio"}:
+        if field.get("type") in {"select", "radio", "multiselect"}:
             options = field.get("options")
             if not isinstance(options, list) or not options or any(not isinstance(option, str) or not option.strip() for option in options):
                 raise ValidationError(f"Field {field_id} requires a non-empty list of text options.")
@@ -47,6 +77,14 @@ def validate_form_schema(schema):
                     raise ValueError
             except (TypeError, ValueError):
                 raise ValidationError(f"Field {field_id} requires valid minimum and maximum values.")
+        if field['type'] in {'heading', 'paragraph', 'image'} and field.get('required'):
+            raise ValidationError('Display elements cannot require an answer.')
+        for key in ('content', 'placeholder'):
+            if key in field and (not isinstance(field[key], str) or len(field[key]) > 10000):
+                raise ValidationError(f'Invalid {key} for {field_id}.')
+        if field['type'] == 'image':
+            from django.core.validators import URLValidator
+            URLValidator(schemes=['https'])(field.get('src', ''))
         condition = field.get("visibleWhen")
         if condition is not None and (not isinstance(condition, dict) or (condition and not isinstance(condition.get("field"), str))):
             raise ValidationError(f"Field {field_id} has an invalid visibility condition.")
@@ -93,6 +131,8 @@ def validate_submission(form, data, *, schema=None):
         field_id = field["id"]
         if not _visible(field, data, fields):
             continue
+        if field['type'] in {'heading', 'paragraph', 'image'}:
+            continue
         value = data.get(field_id)
         if field.get("required") and (value is None or value == "" or value == []):
             errors[field_id] = "This field is required."
@@ -120,6 +160,13 @@ def validate_submission(form, data, *, schema=None):
                 errors[field_id] = f"Enter a value no greater than {field['max']}."
         elif kind in {"select", "radio"} and value not in field.get("options", []):
             errors[field_id] = "Choose one of the listed options."
+        elif kind == 'multiselect' and (not isinstance(value, list) or any(not isinstance(v, str) or v not in field.get('options', []) for v in value) or len(value) != len(set(value))):
+            errors[field_id] = 'Choose distinct listed options.'
+        elif kind == 'time':
+            try:
+                time.fromisoformat(str(value))
+            except ValueError:
+                errors[field_id] = 'Enter a valid time.'
         elif kind == "checkbox" and not isinstance(value, bool):
             errors[field_id] = "Choose yes or no."
         elif kind == "date":
@@ -139,7 +186,7 @@ def validate_submission(form, data, *, schema=None):
     return {
         field["id"]: data[field["id"]]
         for field in schema["fields"]
-        if field["id"] in data and _visible(field, data, fields)
+        if field["type"] not in {"heading", "paragraph", "image"} and field["id"] in data and _visible(field, data, fields)
     }
 
 
@@ -169,6 +216,13 @@ def normalize_schema(schema, organization):
             if not Catalog.objects.filter(pk=catalog_pk, organization=organization).exists():
                 raise ValidationError({field["id"]: "Choose a catalog belonging to this organization."})
             field["catalog_id"] = catalog_pk
+        if 'item_ids' in field:
+            ids = field['item_ids']
+            if not isinstance(ids, list) or not ids or len(ids) > 500 or any(type(pk) is not int or pk < 1 for pk in ids) or len(ids) != len(set(ids)):
+                raise ValidationError({field['id']: 'Select at least one valid library item.'})
+            from .models import CatalogItem
+            if CatalogItem.objects.filter(pk__in=ids, catalog_id=field['catalog_id']).count() != len(ids):
+                raise ValidationError({field['id']: 'Selected items must belong to this question’s catalog.'})
     return schema
 
 
@@ -182,6 +236,7 @@ def save_item_selections(form, submission, data, payload, *, schema=None):
     if any(item.status != ItemSelection.STATUS_PENDING or item.payment_status != ItemSelection.PAYMENT_PENDING for item in existing):
         raise ValidationError('This response has started processing and can no longer be edited.')
     result = []
+    stock_totals = {}
     for field in fields:
         values = data.get(field['id'], [])
         if not isinstance(values, list):
@@ -199,9 +254,28 @@ def save_item_selections(form, submission, data, payload, *, schema=None):
             except (ValueError, TypeError, AttributeError):
                 raise ValidationError({field['id']: 'Choose valid items and whole quantities from 1 to 50.'})
             item = CatalogItem.objects.filter(pk=item_id, catalog_id=field['catalog_id'], catalog__organization=form.organization, is_available=True).first()
-            if item is None:
+            if item is None or ('item_ids' in field and item_id not in field['item_ids']):
                 raise ValidationError({field['id']: 'An item is unavailable or belongs to another catalog.'})
-            selected.append((item, quantity))
+            from .item_options import validate_options
+            validate_options(item.options)
+            chosen = value.get('options', {})
+            if not isinstance(chosen, dict) or set(chosen) - {option['label'] for option in item.options}:
+                raise ValidationError({field['id']: 'Choose valid item options.'})
+            unit_price = item.price
+            for option in item.options:
+                answer = chosen.get(option['label'], '')
+                if (option.get('required') or answer) and answer not in option['choices']:
+                    raise ValidationError({field['id']: f"Choose {option['label']} for {item.name}."})
+                if answer:
+                    from decimal import Decimal
+                    unit_price += Decimal(str(option.get('price_adjustments', {}).get(answer, 0)))
+            notes = value.get('notes', '')
+            if not isinstance(notes, str) or len(notes) > 500:
+                raise ValidationError({field['id']: 'Item instructions must be up to 500 characters.'})
+            stock_totals[item.pk] = stock_totals.get(item.pk, 0) + quantity
+            if item.stock is not None and stock_totals[item.pk] > item.stock:
+                raise ValidationError({field['id']: f"Only {item.stock} units of {item.name} are available."})
+            selected.append((item, quantity, chosen, unit_price, notes))
         selection = next((item for item in existing if item.field_id == field['id']), None)
         # The importer binds historical order IDs. Never accept an order ID from a respondent.
         if not selected and selection is None:
@@ -212,8 +286,8 @@ def save_item_selections(form, submission, data, payload, *, schema=None):
         selection.notes = str(data.get('notes', ''))[:10000]
         selection.save()
         selection.items.all().delete()
-        for item, quantity in selected:
-            SelectionLine.objects.create(selection=selection, catalog_item=item, name=item.name, quantity=quantity, unit_price=item.price)
+        for item, quantity, chosen, unit_price, notes in selected:
+            SelectionLine.objects.create(selection=selection, catalog_item=item, name=item.name, quantity=quantity, unit_price=unit_price, options=chosen, notes=notes)
         selection.recalculate_totals()
         result.append(selection)
     return result

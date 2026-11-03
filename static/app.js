@@ -316,9 +316,51 @@
       return;
     }
     const editorFrame = [...document.querySelectorAll('[data-form-editor-frame]')].find((frame) => frame.contentWindow === event.source);
+    if (editorFrame && event.data?.type === 'orgforms:builder-stage') {
+      const saveButton = editorFrame.closest('[data-form-editor]')?.querySelector('[data-save-form-editor]');
+      if (saveButton) saveButton.disabled = event.data.panel !== 'structure';
+    }
     if (editorFrame && event.data?.type === 'orgforms:saved') {
-      sessionStorage.setItem('orgforms-restore-form-dialog', editorFrame.closest('[data-form-dialog]').id);
-      window.location.reload();
+      const dialog = editorFrame.closest('[data-form-dialog]');
+      const saveButton = dialog.querySelector('[data-save-form-editor]');
+      if (saveButton) saveButton.disabled = true;
+      fetch(location.href, {credentials: 'same-origin', cache: 'no-store'})
+        .then((response) => {
+          if (!response.ok) throw new Error('Unable to refresh form');
+          return response.text();
+        })
+        .then((html) => {
+          const updated = new DOMParser().parseFromString(html, 'text/html');
+          const freshDialog = updated.getElementById(dialog.id);
+          if (!freshDialog) throw new Error('Form no longer available');
+          const preview = dialog.querySelector('[data-form-preview]');
+          const freshPreview = freshDialog.querySelector('[data-form-preview]');
+          if (!preview || !freshPreview) throw new Error('Preview unavailable');
+          // Keep the existing edit button and its listener while replacing the preview data.
+          preview.querySelector('.section-heading h3').textContent = freshPreview.querySelector('.section-heading h3').textContent;
+          preview.querySelector('.section-heading p').textContent = freshPreview.querySelector('.section-heading p').textContent;
+          [...preview.children].slice(1).forEach((element) => element.remove());
+          [...freshPreview.children].slice(1).forEach((element) => preview.append(element));
+          dialog.querySelector('.dialog-heading h2').textContent = freshDialog.querySelector('.dialog-heading h2').textContent;
+          const details = dialog.querySelector('[data-form-panel="details"]');
+          details.innerHTML = freshDialog.querySelector('[data-form-panel="details"]').innerHTML;
+          details.querySelector('[data-form-tab-jump]')?.addEventListener('click', () => activateFormTab(dialog, 'edit'));
+          const card = document.querySelector(`[data-form-card] [data-open-form-manage="${dialog.dataset.formDialog}"]`)?.closest('[data-form-card]');
+          const freshCard = updated.querySelector(`[data-form-card] [data-open-form-manage="${dialog.dataset.formDialog}"]`)?.closest('[data-form-card]');
+          if (card && freshCard) {
+            card.innerHTML = freshCard.innerHTML;
+            card.dataset.searchText = freshCard.dataset.searchText;
+            card.dataset.formStatusValue = freshCard.dataset.formStatusValue;
+          }
+          editorFrame.src = 'about:blank';
+          dialog.querySelector('[data-form-editor]').hidden = true;
+          preview.hidden = false;
+          activateFormTab(dialog, 'edit');
+        })
+        .catch(() => {
+          sessionStorage.setItem('orgforms-restore-form-dialog', dialog.id);
+          window.location.reload();
+        });
     }
   });
   document.querySelectorAll('[data-form-popup-url]').forEach((card) => {
@@ -456,6 +498,7 @@
   });
 
   function activateManageTab(dialog, tabName) {
+    if (tabName === 'ownership') tabName = 'members';
     const validTab = dialog.querySelector(`[data-manage-panel="${tabName}"]`) ? tabName : 'details';
     dialog.querySelectorAll('[data-manage-tab]').forEach((tab) => {
       const selected = tab.dataset.manageTab === validTab;
@@ -560,14 +603,32 @@
     dialog.querySelectorAll('[data-form-panel]').forEach((panel) => {
       panel.hidden = panel.dataset.formPanel !== validTab;
     });
-    if (validTab === 'edit') {
-      const frame = dialog.querySelector('[data-form-editor-frame]');
-      if (frame && frame.src === 'about:blank') frame.src = frame.dataset.src;
-    }
   }
   document.querySelectorAll('[data-form-dialog]').forEach((dialog) => {
     dialog.querySelectorAll('[data-form-tab]').forEach((tab) => {
       tab.addEventListener('click', () => activateFormTab(dialog, tab.dataset.formTab));
+    });
+    const preview = dialog.querySelector('[data-form-preview]');
+    const editor = dialog.querySelector('[data-form-editor]');
+    const frame = dialog.querySelector('[data-form-editor-frame]');
+    const saveButton = dialog.querySelector('[data-save-form-editor]');
+    frame?.addEventListener('load', () => {
+      if (!saveButton) return;
+      try { saveButton.disabled = !frame.contentDocument?.getElementById('form-save') || frame.contentDocument.getElementById('form-save').disabled; }
+      catch (_) { saveButton.disabled = true; }
+    });
+    saveButton?.addEventListener('click', () => {
+      try { frame.contentDocument?.getElementById('form-save')?.click(); }
+      catch (_) { saveButton.disabled = true; }
+    });
+    dialog.querySelector('[data-start-form-edit]')?.addEventListener('click', () => {
+      preview.hidden = true;
+      editor.hidden = false;
+      if (frame.src === 'about:blank') frame.src = frame.dataset.src;
+    });
+    dialog.querySelector('[data-return-form-preview]')?.addEventListener('click', () => {
+      editor.hidden = true;
+      preview.hidden = false;
     });
   });
   document.querySelectorAll('[data-form-tab-jump]').forEach((button) => {
@@ -618,11 +679,11 @@
         const response = await fetch(form.dataset.apiUrl, {
           method: 'PUT',
           headers: {'Content-Type': 'application/json', 'X-CSRFToken': form.querySelector('[name="csrfmiddlewaretoken"]').value},
-          body: JSON.stringify({editors}),
+          body: JSON.stringify({editors, custom_edit_access: form.querySelector('[name="edit_mode"]')?.value === 'custom'}),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || 'Could not save the editor list.');
-        status.textContent = result.editors.length ? `Edit access saved for ${result.editors.join(', ')}.` : 'Edit access is limited to organization admins and managers.';
+        status.textContent = result.editors.length ? `Edit access saved for ${result.editors.join(', ')}.` : (form.querySelector('[name="edit_mode"]')?.value === 'custom' ? 'Selected editors saved. Owners retain access.' : 'Organization edit access saved.');
       } catch (error) {
         status.textContent = error.message;
       } finally {

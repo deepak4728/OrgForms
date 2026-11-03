@@ -3,7 +3,9 @@ import json
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ValidationError, PermissionDenied
+from django.urls import reverse
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Count
 from django.http import HttpResponse
@@ -13,7 +15,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from organizations.models import Organization
-from organizations.permissions import require_membership
+from organizations.permissions import require_membership, visible_forms
 from forms.models import CatalogItem
 from .forms import DatasetForm, RecordForm
 from .models import Dataset, Record
@@ -148,12 +150,15 @@ def api_grants(request, dataset_id):
 
 @login_required
 def library(request, org_slug):
+    from forms.element_catalog import PREBUILT, STARTERS
     organization = get_object_or_404(Organization, slug=org_slug)
     membership = require_membership(request.user, organization)
     can_manage = membership.role in ("admin", "manager")
     selected_view = request.GET.get('view', 'datasets')
-    if selected_view != 'items' or not can_manage:
+    if selected_view not in ('items', 'elements') or not can_manage:
         selected_view = 'datasets'
+    from .models import UIElement
+    elements = UIElement.objects.filter(organization=organization) if can_manage else UIElement.objects.none()
     datasets = list(visible_datasets(request.user, organization).annotate(total=Count('records', distinct=True))[:100])
     for dataset in datasets:
         dataset.access = dataset_permissions(request.user, dataset)
@@ -163,6 +168,8 @@ def library(request, org_slug):
         "dataset_count": visible_datasets(request.user, organization).count(),
         "item_count": CatalogItem.objects.filter(catalog__organization=organization).count() if can_manage else None,
         "selected_view": selected_view,
+        "ui_elements": elements,
+        "prebuilt_elements": PREBUILT, "element_starters": STARTERS,
         "datasets": datasets,
         "items": CatalogItem.objects.filter(catalog__organization=organization).order_by('category', 'name') if can_manage and selected_view == 'items' else [],
     })
@@ -179,6 +186,7 @@ def dataset_list(request, org_slug):
 
 
 @login_required
+@xframe_options_sameorigin
 def dataset_editor(request, org_slug, dataset_id=None):
     organization = get_object_or_404(Organization, slug=org_slug)
     require_membership(request.user, organization, manage=True)
@@ -206,12 +214,12 @@ def dataset_editor(request, org_slug, dataset_id=None):
             form.add_error(None, str(error) if isinstance(error, ValidationError) else "This dataset name is already in use.")
         else:
             messages.success(request, "Dataset definition saved. Existing records retain their original schema version.")
-            if request.GET.get('dialog') == '1' and dataset_id is None:
+            if request.GET.get('dialog') == '1':
                 return render(request, 'datasets/dialog_complete.html')
             return redirect("datasets:detail", org_slug=org_slug, dataset_id=dataset.pk)
     return render(request, "datasets/editor.html", {"organization": organization, "dataset": dataset, "form": form,
-                  "base_template": "embedded.html" if request.GET.get('dialog') == '1' and not dataset_id else "base.html",
-                  "embedded": request.GET.get('dialog') == '1' and not dataset_id,
+                  "base_template": "embedded.html" if request.GET.get('dialog') == '1' else "base.html",
+                  "embedded": request.GET.get('dialog') == '1',
                   "lookup_datasets": list(visible_datasets(request.user, organization).values("id", "name"))})
 
 
@@ -259,10 +267,11 @@ def dataset_detail(request, org_slug, dataset_id):
             members.append(membership)
     return render(request, "datasets/detail.html", {"organization": dataset.organization, "dataset": dataset, "definition": dataset.current_schema,
                   "schema_versions": dataset.schema_versions.all()[:100], "records": rows, "total": count, "query": query, "access": access, "members": members,
-                  "collections": dataset.organization.forms.filter(destination_schema__dataset=dataset)})
+                  "collections": visible_forms(request.user, dataset.organization).filter(destination_schema__dataset=dataset)})
 
 
 @login_required
+@xframe_options_sameorigin
 def record_editor(request, org_slug, dataset_id, record_id=None):
     dataset = get_object_or_404(Dataset.objects.select_related("organization"), pk=dataset_id, organization__slug=org_slug)
     require_dataset(request.user, dataset, "write")
@@ -279,8 +288,10 @@ def record_editor(request, org_slug, dataset_id, record_id=None):
             form.add_error(None, str(error) if isinstance(error, ValidationError) else "The write was not committed. Retry the same request.")
         else:
             messages.success(request, "Record saved with a new revision.")
-            return redirect("datasets:detail" if dataset_permissions(request.user, dataset)["read"] else "datasets:list", **({"org_slug": org_slug, "dataset_id": dataset.pk} if dataset_permissions(request.user, dataset)["read"] else {"org_slug": org_slug}))
-    return render(request, "datasets/record_editor.html", {"organization": dataset.organization, "dataset": dataset, "record": record, "definition": definition, "form": form})
+            if request.GET.get("dialog") == "1":
+                return render(request, "datasets/dialog_complete.html")
+            return redirect("datasets:detail" if dataset_permissions(request.user, dataset)["read"] else "datasets:library", **({"org_slug": org_slug, "dataset_id": dataset.pk} if dataset_permissions(request.user, dataset)["read"] else {"org_slug": org_slug}))
+    return render(request, "datasets/record_editor.html", {"organization": dataset.organization, "dataset": dataset, "record": record, "definition": definition, "form": form, "base_template": "embedded.html" if request.GET.get("dialog") == "1" else "base.html", "embedded": request.GET.get("dialog") == "1"})
 
 
 @login_required
@@ -305,3 +316,94 @@ def api_schema_history(request, dataset_id):
     return Response({"versions": [{"id": str(version.pk), "number": version.number,
                                   "schema": version.schema, "created_at": version.created_at}
                                  for version in dataset.schema_versions.all()[:100]]})
+
+@login_required
+@xframe_options_sameorigin
+def ui_element_editor(request, org_slug, element_id=None):
+    from .models import UIElement
+    from django import forms as django_forms
+    organization = get_object_or_404(Organization, slug=org_slug)
+    require_membership(request.user, organization, manage=True)
+    if organization.is_archived:
+        raise PermissionDenied('Restore this organization before editing UI elements.')
+    element = get_object_or_404(UIElement, pk=element_id, organization=organization) if element_id else UIElement(organization=organization, schema={'fields':[{'id':'quantity','label':'Quantity','type':'number','required':True,'min':1}]})
+    if element_id is None:
+        from forms.element_catalog import PREBUILT
+        prebuilt = next((entry for entry in PREBUILT if entry[0] == request.GET.get('prebuilt')), None)
+        if prebuilt:
+            kind, title, description = prebuilt
+            field = {'id': 'field', 'label': title, 'type': kind, 'required': False}
+            if kind in ('select', 'radio', 'multiselect'):
+                field['options'] = ['Option 1', 'Option 2']
+            if kind == 'rating':
+                field.update(min=1, max=5)
+            element.name, element.description, element.schema = title, description, {'fields': [field]}
+        from forms.element_catalog import STARTERS
+        import copy
+        starter = STARTERS.get(request.GET.get('starter'))
+        if starter:
+            for key, value in starter.items():
+                setattr(element, key, copy.deepcopy(value))
+    class DefinitionForm(django_forms.ModelForm):
+        class Meta:
+            model = UIElement
+            fields = ('name', 'description', 'schema')
+    form = DefinitionForm(request.POST or None, instance=element)
+    if request.method == 'POST' and request.POST.get('action') == 'delete':
+        if not element_id or request.POST.get('confirm_name', '').strip() != element.name:
+            return render(request, 'datasets/ui_element_editor.html', {'organization': organization, 'element': element, 'delete_error': 'Enter the element name to confirm deletion.', 'form': DefinitionForm(instance=element), 'base_template': 'embedded.html' if request.GET.get('dialog') == '1' else 'base.html', 'embedded': request.GET.get('dialog') == '1'}, status=400)
+        element.delete()
+        if request.GET.get('dialog') == '1':
+            return render(request, 'datasets/dialog_complete.html')
+        return redirect(reverse('datasets:library', args=[org_slug]) + '?view=elements')
+
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        if request.GET.get('dialog') == '1':
+            return render(request, 'datasets/dialog_complete.html')
+        return redirect(reverse('datasets:library', args=[org_slug]) + '?view=elements')
+    return render(request, 'datasets/ui_element_editor.html', {'organization':organization,'element':element if element_id else None,'form':form,'base_template':'embedded.html' if request.GET.get('dialog')=='1' else 'base.html','embedded':request.GET.get('dialog')=='1'})
+
+@api_view(['GET'])
+def api_ui_elements(request, org_slug):
+    from .models import UIElement
+    organization = get_object_or_404(Organization, slug=org_slug)
+    require_membership(request.user, organization, manage=True)
+    return Response(list(UIElement.objects.filter(organization=organization).values('id', 'name', 'description', 'schema')))
+
+@api_view(['POST'])
+def draft_ui_element(request, org_slug):
+    """Propose a tenant-scoped component; saving remains an explicit editor action."""
+    from ai_gateway.creation import local_json, FIELD_SCHEMA
+    from forms.element_catalog import PREBUILT
+    from forms.services import validate_form_schema
+    import copy
+    organization = get_object_or_404(Organization, slug=org_slug)
+    require_membership(request.user, organization, manage=True)
+    if organization.is_archived:
+        raise PermissionDenied('Restore this organization before editing UI elements.')
+    prompt = str(request.data.get('prompt', '')).strip()
+    if not prompt or len(prompt) > 4000:
+        return Response({'error':'Describe the component in 1–4000 characters.'}, status=400)
+    field = copy.deepcopy(FIELD_SCHEMA)
+    field['properties']['type']['enum'] = [entry[0] for entry in PREBUILT]
+    field['properties'].update({'content':{'type':'string'},'src':{'type':'string'},'placeholder':{'type':'string'}})
+    output = {'type':'object','properties':{'name':{'type':'string'},'description':{'type':'string'},'layout':{'type':'string','enum':['stack','grid']},'fields':{'type':'array','items':field,'minItems':1,'maxItems':20}},'required':['name','description','layout','fields']}
+    system = ('Design one reusable organization-neutral UI component composed of supported primitives. Return only the requested JSON. '
+              'The application renders escaped HTML inside a fieldset with the component name as legend. Never output HTML, CSS or JavaScript. '
+              'Use heading and paragraph for display-only text, image for display images with HTTPS src and descriptive label; these are never required. '
+              'Use input fields only for answers. For a menu or inventory chooser use item_cards: it binds to current organization Library items and renders name, description, quantity, availability and Add/remove controls with list/grid switching. '
+              'Do not invent inventory, image URLs, prices or stock. Do not make respondents enter item names or images. Never model display names as text inputs, display descriptions as textarea inputs, display images as file uploads, or Add/remove buttons as text inputs. For Add/remove quantity actions use item_cards, whose renderer supplies functional controls. '
+              'For a fixed custom card combine display primitives with number quantity and radio/select preferences such as spice. '
+              'IDs must start with a letter and contain only letters, digits, underscore or hyphen. Choices require nonempty options. '
+              'Keep the component concise; choose grid for compact related controls and stack for long content. '
+              'Supported primitives: ' + ', '.join(entry[0] for entry in PREBUILT))
+    try:
+        result = local_json(prompt, system, request.data.get('model'), output)
+        if isinstance(result, tuple):
+            result = result[0]
+        schema = {'fields':result['fields'], 'layout':result['layout']}
+        validate_form_schema(schema)
+        return Response({'name':result['name'][:200], 'description':result['description'], 'schema':schema})
+    except (ValidationError, KeyError, TypeError, ValueError) as exc:
+        return Response({'error':str(exc)}, status=400)

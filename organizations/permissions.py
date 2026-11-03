@@ -27,6 +27,8 @@ def can_manage_form(user, form):
     membership = membership_for(user, form.organization)
     if not membership:
         return False
+    if form.custom_edit_access:
+        return user.pk in {form.created_by_id, form.organization.created_by_id} or form.editors.filter(pk=user.pk).exists()
     if membership.role in (OrganizationMembership.ROLE_ADMIN, OrganizationMembership.ROLE_MANAGER):
         return True
     return form.editors.filter(pk=user.pk).exists()

@@ -8,6 +8,7 @@ from decimal import Decimal
 
 
 class DynamicForm(models.Model):
+    RESERVED_SLUGS = frozenset({"settings", "people", "menu", "submissions", "forms", "data", "library"})
     VISIBILITY_PUBLIC = "public"
     VISIBILITY_ORGANIZATION = "organization"
     VISIBILITY_RESTRICTED = "restricted"
@@ -36,6 +37,7 @@ class DynamicForm(models.Model):
     visibility = models.CharField(max_length=16, choices=VISIBILITY_CHOICES, default=VISIBILITY_ORGANIZATION)
     allowed_users = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="shared_orgforms")
     allowed_departments = models.ManyToManyField("organizations.Department", blank=True, related_name="accessible_forms")
+    custom_edit_access = models.BooleanField(default=False)
     editors = models.ManyToManyField(settings.AUTH_USER_MODEL, blank=True, related_name="editable_orgforms")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -69,7 +71,7 @@ class DynamicForm(models.Model):
             validate_binding(self)
             if not self.slug:
                 base = slugify(self.title)[:150] or "form"
-                if base in {"settings", "people", "menu", "submissions", "forms", "data"}:
+                if base in self.RESERVED_SLUGS:
                     base += "-form"
                 candidate, counter = base, 2
                 while type(self).objects.filter(organization=self.organization, slug=candidate).exclude(pk=self.pk).exists():
@@ -248,6 +250,9 @@ class CatalogItem(models.Model):
     name = models.CharField(max_length=200)
     category = models.CharField(max_length=100, default="General")
     description = models.TextField(blank=True, default="")
+    image_url = models.URLField(blank=True, default="")
+    options = models.JSONField(default=list, blank=True)
+    stock = models.PositiveIntegerField(null=True, blank=True)
     barcode = models.CharField(max_length=128, blank=True, default="", db_index=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     is_available = models.BooleanField(default=True)
@@ -345,6 +350,8 @@ class ItemSelection(models.Model):
 
 
 class SelectionLine(models.Model):
+    notes = models.TextField(blank=True, default="", max_length=500)
+    options = models.JSONField(default=dict, blank=True)
     selection = models.ForeignKey(ItemSelection, on_delete=models.CASCADE, related_name="items")
     catalog_item = models.ForeignKey(CatalogItem, on_delete=models.PROTECT, related_name="selection_lines")
     name = models.CharField(max_length=200, blank=True, default="")
