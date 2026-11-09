@@ -14,7 +14,7 @@ from django.contrib.auth.views import redirect_to_login
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction, OperationalError
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.db.models.functions import TruncDate
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.urls import reverse
@@ -195,16 +195,43 @@ def form_editor(request, org_slug, form_id=None):
     return redirect("organizations:detail", org_slug=organization.slug)
 
 
+def _readable_answer(value, item_names):
+    if isinstance(value, list):
+        rows = []
+        for entry in value:
+            if isinstance(entry, dict) and "menu_item_id" in entry:
+                name = item_names.get(str(entry['menu_item_id']), 'Unavailable item')
+                text = f"{name} × {entry.get('quantity', 0)}"
+                choices = entry.get('options') or {}
+                if choices:
+                    text += " · " + ", ".join(f"{key}: {choice}" for key, choice in choices.items())
+                if entry.get('notes'):
+                    text += "\nNote: " + str(entry['notes'])
+                rows.append(text)
+            else:
+                rows.append(_readable_answer(entry, item_names))
+        return "\n".join(rows) or 'None selected'
+    if isinstance(value, dict):
+        return "\n".join(f"{str(key).replace('_', ' ').capitalize()}: {_readable_answer(item, item_names)}" for key, item in value.items())
+    if isinstance(value, bool):
+        return 'Yes' if value else 'No'
+    return str(value) if value is not None else 'Not provided'
+
+
 def _prepare_response_history(submissions):
+    names_by_org = {}
     for submission in submissions:
+        if submission.organization_id not in names_by_org:
+            names_by_org[submission.organization_id] = {str(pk): name for pk, name in CatalogItem.objects.filter(catalog__organization_id=submission.organization_id).values_list("pk", "name")}
+        item_names = names_by_org[submission.organization_id]
         submission.display_respondent = submission.respondent_name or (submission.submitted_by.email if submission.submitted_by else "") or "Anonymous respondent"
         revision = submission.collection_revision
         labels = {field["id"]: field["label"] for field in (revision.schema if revision else {}).get("fields", [])}
-        submission.answer_rows = [{"label": labels.get(key, key), "value": value} for key, value in submission.data.items()]
+        submission.answer_rows = [{"label": labels.get(key, "Order reference" if key == "order_id" else key.replace("_", " ").capitalize()), "value": _readable_answer(value, item_names)} for key, value in submission.data.items()]
         submission.visible_attachments = [item for item in submission.attachments.all() if item.is_current]
         submission.history_entries = list(submission.revisions.all())
         for entry in submission.history_entries:
-            entry.answer_rows = [{"label": labels.get(key, key), "value": value} for key, value in entry.data.items()]
+            entry.answer_rows = [{"label": labels.get(key, "Order reference" if key == "order_id" else key.replace("_", " ").capitalize()), "value": _readable_answer(value, item_names)} for key, value in entry.data.items()]
 
 
 @login_required
@@ -341,7 +368,21 @@ def public_form(request, org_slug, form_slug):
         initial_record = {"id": str(record.pk), "version": record.version,
                           "data": {source: record.data[target] for source, target in revision.field_mapping.items() if target in record.data}}
     field_catalogs = {field["id"]: field["catalog_id"] for field in schema["fields"] if field["type"] == "item_cards"}
-    menu_items = list(CatalogItem.objects.filter(catalog_id__in=field_catalogs.values(), catalog__organization=organization, is_available=True).values("id", "catalog_id", "name", "category", "description", "price", "options", "stock", "image_url"))
+    menu_scope = Q(pk__in=[])
+    for field in schema['fields']:
+        if field['type'] != 'item_cards':
+            continue
+        scope = Q() if field.get('item_source') == 'organization' else Q(catalog_id=field['catalog_id'])
+        if field.get('item_category'):
+            scope &= Q(category=field['item_category'])
+        if 'item_ids' in field:
+            scope &= Q(pk__in=field['item_ids'])
+        # An unrestricted organization-wide field dominates the union.
+        if not scope.children:
+            menu_scope = Q(catalog__organization=organization)
+            break
+        menu_scope |= scope
+    menu_items = list(CatalogItem.objects.filter(menu_scope, catalog__organization=organization, is_available=True).values("id", "catalog_id", "name", "category", "description", "price", "options", "stock", "image_url"))
     return render(request, "forms/public_form.html", {
         "organization": organization, "form": form, "revision": revision,
         "initial_record": initial_record,
@@ -383,9 +424,17 @@ def api_form_detail(request, form_id):
     if request.method == "DELETE":
         if not privileged:
             return Response({"detail": "Only an organization manager or admin can delete forms."}, status=403)
-        if form.submissions.exists():
-            return Response({"detail": "Archive forms with responses to preserve their records."}, status=409)
-        form.delete()
+        if request.data.get("confirm_title") != form.title:
+            return Response({"detail": "Enter the exact form title to confirm permanent deletion."}, status=400)
+        from django.core.files.storage import default_storage
+        from forms.models import ItemSelection
+        with transaction.atomic():
+            form = DynamicForm.objects.select_for_update().get(pk=form.pk)
+            attachments = tuple(SubmissionAttachment.objects.filter(submission__form=form).values_list("file", flat=True))
+            ItemSelection.objects.filter(submission__form=form).delete()
+            form.submissions.all().delete()
+            form.delete()
+            transaction.on_commit(lambda: [default_storage.delete(name) for name in attachments if name])
         return Response(status=status.HTTP_204_NO_CONTENT)
     serializer = DynamicFormSerializer(form, data=request.data, partial=True, context={"request": request})
     serializer.is_valid(raise_exception=True)

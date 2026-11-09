@@ -12,7 +12,7 @@ from django.core.exceptions import PermissionDenied
 from django.core.files.storage import default_storage
 from django.db import transaction
 from accounts.models import AccountSpace, UserPortfolio, PersonalDocument
-from accounts.forms import AccountDetailsForm, RegistrationForm
+from accounts.forms import AccountDetailsForm, OrganizationAccountDetailsForm, RegistrationForm
 from orgforms.upload_validation import validate_private_document
 
 
@@ -46,7 +46,10 @@ def logout_view(request):
 def profile(request):
     account_space = AccountSpace.objects.filter(user=request.user).first()
     personal_features = not account_space or account_space.kind == AccountSpace.PERSONAL
-    details_form = AccountDetailsForm(instance=request.user, prefix="details")
+    details_form_class = AccountDetailsForm if personal_features else OrganizationAccountDetailsForm
+    from organizations.models import OrganizationMembership
+    profile_membership = OrganizationMembership.objects.filter(user=request.user).select_related('organization').first() if not personal_features else None
+    details_form = details_form_class(instance=request.user, prefix="details")
     password_form = PasswordChangeForm(request.user, prefix="password")
     portfolio = UserPortfolio.objects.get_or_create(user=request.user)[0] if personal_features else None
     portfolio_error = ""
@@ -55,7 +58,7 @@ def profile(request):
         if not personal_features and action in {"portfolio", "upload-document", "delete-document"}:
             raise PermissionDenied("Personal profiles require a personal account.")
         if action == "details":
-            details_form = AccountDetailsForm(request.POST, instance=request.user, prefix="details")
+            details_form = details_form_class(request.POST, instance=request.user, prefix="details")
             if details_form.is_valid():
                 details_form.save()
                 messages.success(request, "Your profile details have been updated.")
@@ -106,6 +109,7 @@ def profile(request):
                 return redirect("accounts:profile")
     return render(request, "accounts/profile.html", {
         "details_form": details_form,
+        "profile_membership": profile_membership,
         "password_form": password_form,
         "portfolio": portfolio,
         "portfolio_json": request.POST.get("profile_data", json.dumps(portfolio.profile_data if portfolio and isinstance(portfolio.profile_data, dict) else {}, ensure_ascii=False, indent=2)) if request.method == "POST" and request.POST.get("action") == "portfolio" else json.dumps(portfolio.profile_data if portfolio and isinstance(portfolio.profile_data, dict) else {}, ensure_ascii=False, indent=2),

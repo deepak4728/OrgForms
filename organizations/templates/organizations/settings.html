@@ -20,6 +20,11 @@
     <div class="field"><label for="settings-description">Description</label><textarea id="settings-description" name="description">{{ organization.description }}</textarea></div>
     <div class="field"><label for="settings-purpose">Purpose</label><input id="settings-purpose" name="purpose" maxlength="80" value="{{ organization.purpose }}" placeholder="Orders, bookings, feedback…"></div>
     <section class="profile-library-panel"><div class="profile-library-heading"><div><p class="eyebrow">Organization details library</p><h3>Details for this category</h3></div><span class="muted">Optional · visible to your team</span></div><div data-profile-fields class="profile-library-grid"></div><p class="profile-library-note">Change the category to see its suggested details. Existing values are kept when the field is available in the new category.</p></section>
+    <details><summary>Public form header · optional</summary>
+    <p class="muted">Shown to anyone who can open your forms. Add only information intended for respondents.</p>
+    <div class="field"><label for="public-image-url">Organization image URL</label><input id="public-image-url" name="public_image_url" type="url" pattern="https://.*" placeholder="https://example.com/logo.png" value="{{ organization.profile_data.public_image_url }}"><small>HTTPS image, shown beside the form title.</small></div>
+    <div class="field"><label for="public-info">Public organization information</label><textarea id="public-info" name="public_info" maxlength="1000" placeholder="Address, opening hours, or contact information">{{ organization.profile_data.public_info }}</textarea></div>
+    </details>
     <input type="hidden" name="profile_data" value="{}">
     <div class="settings-save-row"><span class="muted">The public link remains stable when you change the display name.</span><button type="submit">Save details</button></div>
   </form>

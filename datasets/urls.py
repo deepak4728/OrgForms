@@ -3,6 +3,8 @@ from . import views
 
 app_name = "datasets"
 urlpatterns = [
+    path('org/<slug:org_slug>/library/items/new/', views.library_item_editor, name='item-new'),
+    path('org/<slug:org_slug>/library/items/<int:item_id>/edit/', views.library_item_editor, name='item-edit'),
     path("api/orgs/<slug:org_slug>/ui-elements/draft/", views.draft_ui_element, name="element-draft"),
     path("api/orgs/<slug:org_slug>/ui-elements/", views.api_ui_elements, name="api-elements"),
     path("org/<slug:org_slug>/library/elements/new/", views.ui_element_editor, name="element-new"),

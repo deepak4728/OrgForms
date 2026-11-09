@@ -87,3 +87,278 @@
  .element-editor .schema-field-main { grid-template-columns:repeat(2,minmax(0,1fr)); }
  .element-editor .schema-field-main > label:nth-child(3) { grid-column:1; }
 }
+/* Simple Library workflow */
+.library-more { position:relative; }
+.library-more summary { cursor:pointer; padding:8px 12px; font-size:13px; }
+.library-more[open] a { position:absolute; right:0; top:100%; z-index:5; min-width:180px; padding:12px; border:1px solid var(--line); border-radius:6px; background:var(--canvas); }
+.library-search { display:flex; align-items:center; gap:12px; margin-bottom:16px; font-size:12px; }
+.library-search input { flex:1; max-width:420px; }
+.library-item-editor > details { margin:16px 0; padding:12px 0; border-top:1px solid var(--line); }
+.library-item-editor summary { cursor:pointer; font-size:13px; font-weight:600; margin-bottom:12px; }
+.item-option-editor { padding:12px 0; border-top:1px solid var(--line); }
+.item-option-editor .data-actions > input { flex:1; min-width:120px; }
+.item-option-editor .data-check { margin:0; }
+.item-choice-row { display:grid; grid-template-columns:minmax(0,2fr) minmax(90px,1fr) auto; align-items:center; gap:8px; margin:8px 0; }
+.library-item-editor input:not([type=checkbox]), .library-item-editor textarea { width:100%; }
+.data-page [hidden] { display:none !important; }
+.element-editor .schema-field-main { grid-template-columns:minmax(100px,2fr) minmax(110px,1fr) auto auto auto; gap:8px; }
+.element-editor .schema-field-main .schema-field-order { display:flex; margin:0; }
+.saved-section-field-advanced { margin-top:8px; font-size:11px; color:var(--muted); }
+.saved-section-field-advanced > summary { cursor:pointer; }
+.saved-section-field-advanced label { display:block; margin-top:8px; }
+.element-editor .schema-field-main .data-check { gap:4px; margin:0; min-height:36px; }
+@media(max-width:640px) { .element-editor .schema-field-main { display:flex; flex-wrap:wrap; align-items:end; } .element-editor .schema-field-main > label:first-child { flex:1 1 100%; } .element-editor .schema-field-main > label:not(:first-child):not(.data-check) { flex:1; } }
+@media(max-width:600px) {
+ .library-search { display:block; }
+ .library-search input { display:block; max-width:none; margin-top:6px; }
+ .data-table.library-items-table { display:block; min-width:0; }
+ .library-items-table thead { display:none; }
+ .library-items-table tbody { display:grid; gap:12px; }
+ .library-items-table tr { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); border:1px solid var(--line); border-radius:6px; padding:10px; }
+ .library-items-table td { display:block; border:0; padding:6px; white-space:normal !important; text-align:left !important; overflow-wrap:anywhere; }
+ .library-items-table td:first-child,.library-items-table td:last-child { grid-column:1/-1; }
+ .library-items-table td[data-label]::before { content:attr(data-label); display:block; font-size:11px; color:var(--muted); margin-bottom:3px; }
+ .library-items-table td:last-child a { display:flex; justify-content:center; }
+}
+.library-header { display:flex; flex-wrap:wrap; gap:12px; padding:18px!important; }
+.library-header > div { flex:1 1 100%; }
+.library-header .lede { margin-bottom:0; }
+.library-tabs { display:flex; align-items:center; gap:20px; border-bottom:1px solid var(--line); width:100%; overflow-x:auto; }
+.library-tabs .library-tab { display:inline-flex; align-items:center; gap:7px; padding:9px 0; border-bottom:2px solid transparent; color:var(--muted); text-decoration:none; white-space:nowrap; font-size:13px; }
+.library-tabs .library-tab[aria-current] { border-bottom-color:var(--ink); color:var(--ink); font-weight:600; }
+.library-tab .action-count { background:var(--surface-soft); color:var(--ink); padding:1px 5px; border-radius:4px; font-size:11px; }
+.element-delete { padding:10px 0; margin-top:10px; border-top:1px solid var(--line); font-size:12px; }
+.element-delete p { margin:7px 0; font-size:11px; line-height:1.4; }
+.element-delete form { display:grid; grid-template-columns:auto minmax(100px,240px) auto; align-items:center; gap:8px; justify-content:start; }
+.element-delete .data-actions { display:contents; }
+.element-delete input { width:100%; min-height:32px; }
+.element-delete button { min-height:32px; padding:6px 10px; font-size:12px; }
+@media(max-width:480px){.element-delete form{grid-template-columns:minmax(0,1fr) auto;}.element-delete form>label{grid-column:1/-1;}}
+
+.library-item-editor { font-size:12px; }
+.library-item-editor > p { margin:0 0 10px; font-size:11px; }
+.library-item-editor .data-form-grid { grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px 12px; }
+.library-item-editor .field { display:flex; flex-direction:column; gap:4px; margin:0; }
+.library-item-editor .item-field-description { grid-column:1/-1; }
+.library-item-editor textarea { min-height:56px; height:56px; padding:7px 9px; }
+.library-item-editor input:not([type=checkbox]),.library-item-editor select { min-height:32px; padding:6px 8px; }
+.library-item-editor > details { margin:10px 0; padding:8px 0; }
+.library-item-editor summary { margin-bottom:8px; font-size:12px; }
+.library-item-editor .data-footer { margin-top:10px; padding-top:10px; }
+@media(max-width:600px){.library-item-editor .data-form-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+@media(max-width:360px){.library-item-editor .data-form-grid{grid-template-columns:1fr;}}
+
+.library-quantity-preset { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:12px; margin:12px 0; background:var(--surface-soft); border-radius:8px; }
+.library-quantity-preset > div { flex:1 1 220px; }
+.library-quantity-preset h3 { margin:0 0 4px; font-size:14px; }
+.library-quantity-preset p { margin:0; font-size:12px; }
+.quantity-example { display:flex; justify-content:space-between; align-items:center; width:110px; padding:7px 10px; border:1px solid var(--line); border-radius:7px; background:var(--surface); }
+
+/* Quiet Library workspace: clear tabs, flat surfaces and reachable controls. */
+.data-page .library-header { background:transparent; border:0; box-shadow:none; border-radius:0; padding:8px 0 16px; margin-bottom:16px; }
+.library-header .lede { font-size:14px; color:var(--muted); margin:4px 0 0; }
+.library-header .eyebrow { font-size:12px; letter-spacing:0; text-transform:none; }
+.library-tabs { display:flex; flex-wrap:wrap; gap:4px; align-self:end; }
+.library-tabs .library-tab { display:inline-flex; align-items:center; gap:8px; padding:10px 12px; min-height:44px; box-sizing:border-box; border-radius:6px; text-decoration:none; color:var(--muted); background:transparent; border:0; box-shadow:none; }
+.library-tabs .library-tab[aria-current=page] { color:var(--ink); background:var(--surface-soft); font-weight:600; }
+.library-content { border-radius:8px; padding:20px; }
+.library-content .data-section-heading h2 { font-size:18px; margin-bottom:4px; }
+.library-content .data-section-heading p { margin:0; font-size:13px; }
+.library-content .button { display:inline-flex; align-items:center; justify-content:center; min-height:40px; box-sizing:border-box; box-shadow:none; border-radius:6px; }
+.library-content .element-entry { border:0; border-bottom:1px solid var(--line); border-radius:0; padding:16px 0; background:transparent; }
+.library-content .element-catalog { grid-template-columns:1fr; gap:0; }
+.library-content .library-search { display:flex; flex-wrap:wrap; gap:8px; font-size:13px; }
+.library-content .library-search input { min-height:40px; max-width:440px; border:1px solid var(--line); border-radius:6px; padding:8px 12px; background:var(--surface); color:var(--ink); }
+.library-search-empty { padding:24px 0; color:var(--muted); }
+.library-content [hidden] { display:none!important; }
+@media(max-width:640px) {
+ .library-header { display:block; }
+ .library-tabs { margin-top:16px; }
+ .library-tabs .library-tab { padding:10px; font-size:13px; }
+ .library-content { padding:16px; }
+ .library-content .data-section-heading { align-items:start; }
+ .library-content .data-section-heading > div { flex:1 1 180px; }
+ .library-content .library-search { align-items:stretch; flex-direction:column; }
+ .library-content .library-search input { width:100%; max-width:none; }
+ .library-content .data-actions .button { min-height:44px; }
+}
+
+/* Reusable page sections keep the existing theme and narrow-screen layout. */
+.starter-library { margin-top: 2rem; border-top: 1px solid var(--line); padding-top: 1.5rem; }
+.starter-library > section { margin-top: 1.75rem; }
+.starter-library .element-entry h4 { margin: 0; font-size: 1rem; }
+.starter-library [hidden] { display: none !important; }
+
+.starter-preview { margin-top: .75rem; }
+.starter-preview summary { cursor: pointer; padding: .5rem 0; }
+.starter-preview summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.starter-preview-content { border-left: 2px solid currentColor; padding: .25rem 1rem; margin-top: .5rem; max-width: 42rem; }
+.starter-preview-field { padding: .5rem 0; overflow-wrap: anywhere; }
+.starter-preview-field > span, .starter-preview-field > small { display: block; }
+.starter-preview-field p { margin: .25rem 0; }
+.starter-library .element-entry { align-items: start; }
+.starter-library .element-entry > div { min-width: 0; flex: 1; }
+
+/* Container sizing follows the available section width, including embedded forms. */
+.starter-preview { container-type: inline-size; }
+.starter-preview-content { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .5rem 1rem; }
+.starter-preview-field { min-width: 0; grid-column: span 6; }
+.starter-preview-group { grid-column: 1 / -1; padding-top: .75rem; border-bottom: 1px solid var(--line); }
+@container (min-width: 420px) {
+ .starter-preview-content[data-layout=grid] > .starter-preview-field,
+ .starter-preview-field[data-group-layout=grid] { grid-column: span 3; }
+ .starter-preview-content > .starter-preview-field[data-width=half] { grid-column: span 3; }
+ .starter-preview-content > .starter-preview-field[data-width=third] { grid-column: span 2; }
+ .starter-preview-content > .starter-preview-field[data-width=full],
+ .starter-preview-field[data-kind=heading] { grid-column: 1 / -1; }
+}
+@media (max-width: 540px) {
+ .starter-library .element-entry { flex-wrap: wrap; }
+ .starter-library .element-entry > div { flex-basis: 100%; }
+ .starter-library .element-entry > .button { min-height: 44px; display: inline-flex; align-items: center; }
+}
+
+.saved-section-canvas { border:1px solid var(--line); border-radius:10px; padding:16px; margin:12px 0; min-width:0; }
+.saved-section-canvas legend { font-weight:600; padding:0 8px; }
+.section-layout-control { display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:13px; }
+.section-layout-control select { width:auto; }
+.saved-section-canvas #dataset-field-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr)); gap:12px; }
+.saved-section-canvas #dataset-field-list[data-layout=stack] { grid-template-columns:minmax(0,1fr); }
+.saved-section-canvas .schema-field { min-width:0; margin:0; padding:14px; border:1px solid var(--line); border-radius:8px; background:var(--surface); }
+.saved-section-canvas .schema-field-main { display:flex; flex-wrap:wrap; align-items:end; gap:8px; }
+.saved-section-canvas .schema-field-main > label { flex:1 1 140px; min-width:0; }
+.saved-section-canvas .schema-field-main > .data-check { flex:0 0 auto; }
+.saved-section-canvas .schema-field-main input,.saved-section-canvas .schema-field-main select { max-width:100%; }
+
+/* Leave a breathing edge around embedded section editing. */
+.embedded-page .data-page:has(.element-editor) { padding:16px; }
+.element-editor { padding:16px; }
+.element-editor .saved-section-canvas { margin:12px 0; padding:12px; }
+.element-editor .saved-section-canvas .schema-field { padding:12px; align-self:start; }
+.element-editor .saved-section-canvas #dataset-field-list { align-items:start; }
+.section-field-tools { display:none; margin-top:10px; border-top:1px solid var(--line); padding-top:8px; }
+.schema-field.is-active .section-field-tools { display:block; }
+.schema-field.is-active { outline:2px solid var(--accent, currentColor); outline-offset:1px; }
+.section-field-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:6px; }
+.element-editor .section-field-toolbar .data-check { display:inline-flex; gap:6px; margin:0 auto 0 0; }
+.element-editor .section-field-toolbar .schema-field-order { display:flex; margin:0; gap:4px; }
+.element-editor .section-field-toolbar button { min-height:32px; padding:4px 9px; box-shadow:none; }
+.element-editor .saved-section-field-advanced { font-size:12px; margin:4px 0; }
+.element-editor .saved-section-field-advanced summary { padding:4px 0; cursor:pointer; }
+.element-editor .data-footer { margin:14px -4px 0; padding:10px 4px; border-top:1px solid var(--line); }
+@media(max-width:540px) { .embedded-page .data-page:has(.element-editor) { padding:10px; } .element-editor { padding:12px; } }
+
+/* Compact section metadata, with clear separation between secondary actions. */
+.embedded-page .data-page:has(.element-editor) { padding-top:10px; }
+.element-editor-intro p { margin:0 0 8px; font-size:12px; }
+.element-editor { padding:12px 16px; }
+.element-editor .element-ai { margin:0 0 8px; font-size:12px; }
+.element-editor .element-ai > summary { padding:2px 0; }
+.element-editor-details { gap:10px; margin-bottom:10px; }
+.element-editor-details label { font-size:12px; margin-bottom:4px; }
+.element-editor-details input,.element-editor-details textarea { min-height:34px!important; height:34px!important; padding:6px 9px; font-size:13px; }
+.element-editor > .data-section-heading { margin:8px 0; gap:10px; align-items:center; }
+.element-editor > .data-section-heading h2 { font-size:16px; margin:0; }
+.element-editor > .data-section-heading button { min-height:34px; padding:6px 10px; font-size:12px; }
+.element-editor .saved-section-canvas { margin-top:8px; }
+.element-editor .section-preview-action { margin:14px 0 0; }
+.element-editor .section-advanced-definition { margin-top:14px; }
+.element-editor .section-advanced-definition > summary { cursor:pointer; padding:4px 0; }
+
+.section-editor-topbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; padding:4px 0 10px; }
+.section-editor-topbar .element-editor-intro { flex:1 1 240px; }
+.section-editor-topbar .element-editor-intro p { margin:0; font-size:12px; }
+.section-top-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.section-top-actions button,.section-top-actions a { min-height:34px; padding:6px 12px; font-size:12px; }
+
+/* Keep field actions in the selected card so the canvas never shifts columns. */
+.element-editor .section-field-tools { display:none; }
+.element-editor .schema-field.is-active .section-field-tools {
+  display:block;
+  margin:9px 0 0;
+  padding:8px 0 0;
+  border-top:1px solid var(--line);
+}
+.element-editor .section-field-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:0 0 4px; }
+.element-editor .section-field-toolbar .data-check { display:inline-flex; align-items:center; gap:6px; margin:0 auto 0 0; font-size:12px; }
+.element-editor .section-field-toolbar .schema-field-order { display:flex; gap:4px; margin:0; }
+.element-editor .section-field-toolbar button { min-width:30px; min-height:30px; padding:3px 8px; box-shadow:none; }
+.element-editor .section-field-tools > details { display:block; margin:0; font-size:12px; }
+.element-editor .section-field-tools > details > summary { width:max-content; max-width:100%; padding:5px 0; cursor:pointer; }
+.element-editor .section-field-tools > details[open] { padding:2px 0 8px; }
+.element-editor .section-field-tools textarea { min-height:64px; height:64px; }
+
+/* Quiet selection styling; interaction stays explicit through click and keyboard. */
+.element-editor .schema-field.is-active { outline:none; border-color:var(--line); background:var(--canvas); box-shadow:none; }
+.element-editor .saved-section-canvas { border:0; padding:8px 0; }
+.element-editor .saved-section-canvas .schema-field input:focus,
+.element-editor .saved-section-canvas .schema-field select:focus { outline:none; box-shadow:none; border-color:var(--muted); }
+.element-editor .saved-section-canvas .schema-field input:focus-visible,
+.element-editor .saved-section-canvas .schema-field select:focus-visible { outline:2px solid var(--muted); outline-offset:2px; }
+
+/* Selection is a side marker, never a second surrounding field box. */
+.element-editor .saved-section-canvas #dataset-field-list > .schema-field {
+  position:relative;
+  border-color:transparent;
+  border-radius:0;
+  outline:none;
+  box-shadow:none;
+  background:transparent;
+}
+.element-editor .saved-section-canvas #dataset-field-list > .schema-field.is-active {
+  border-color:transparent;
+  outline:none;
+  box-shadow:none;
+  background:color-mix(in srgb, var(--accent-2) 6%, var(--surface));
+}
+.element-editor .saved-section-canvas .schema-field.is-active::before {
+  content:""; position:absolute; left:0; top:12px; bottom:12px;
+  width:3px; border-radius:2px; background:var(--accent-2);
+}
+.element-editor .saved-section-canvas .schema-field input:focus-visible,
+.element-editor .saved-section-canvas .schema-field select:focus-visible {
+  outline:none; box-shadow:none; border-color:var(--text);
+}
+
+/* Preserve the normal card border; selection adds only the side marker. */
+.element-editor .saved-section-canvas #dataset-field-list > .schema-field,
+.element-editor .saved-section-canvas #dataset-field-list > .schema-field.is-active {
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--surface);
+  outline:none;
+  box-shadow:none;
+}
+.element-editor .saved-section-canvas #dataset-field-list > .schema-field.is-active {
+  background:color-mix(in srgb, var(--accent-2) 6%, var(--surface));
+}
+
+/* Separate field captions from their controls consistently. */
+.element-editor .saved-section-canvas .schema-field-main > label {
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  margin:0;
+  line-height:1.35;
+}
+.element-editor .saved-section-canvas .schema-field-main > label > input,
+.element-editor .saved-section-canvas .schema-field-main > label > select {
+  margin:0;
+}
+
+/* Compact section canvas with readable captions and consistent control sizing. */
+.element-editor .saved-section-canvas #dataset-field-list { gap:10px; }
+.element-editor .saved-section-canvas #dataset-field-list > .schema-field { padding:9px 11px; }
+.element-editor .saved-section-canvas .schema-field-main { gap:8px; }
+.element-editor .saved-section-canvas .schema-field-main > label { font-size:11px; gap:5px; line-height:1.25; }
+.element-editor .saved-section-canvas .schema-field-main > label > input,
+.element-editor .saved-section-canvas .schema-field-main > label > select { min-height:34px; height:34px; padding:5px 8px; font-size:13px; border-radius:6px; }
+.element-editor .saved-section-canvas legend { font-size:14px; padding:0 6px; }
+.element-editor .section-layout-control { font-size:12px; margin-bottom:8px; gap:6px; }
+.element-editor .saved-section-canvas .schema-field.is-active::before { top:9px; bottom:9px; width:3px; }
+@media(pointer:coarse) {
+ .element-editor .saved-section-canvas .schema-field-main > label > input,
+ .element-editor .saved-section-canvas .schema-field-main > label > select { min-height:40px; height:40px; }
+}
+
+.element-editor { padding-bottom:16px; }

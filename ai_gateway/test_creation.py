@@ -176,6 +176,7 @@ class LocalCreationTests(APITestCase):
         response=self.client.post(f'/api/creation/forms/{self.org.slug}/',{'prompt':'Order coffee from the catalog'},format='json')
         self.assertEqual(response.status_code,200)
         self.assertEqual(response.data['form']['fields'][0]['catalog_id'],catalog.pk)
+        self.assertEqual(response.data['form']['fields'][0]['item_source'],'organization')
         self.assertTrue(any('all available' in text for text in response.data['warnings']))
         context=json.loads(upstream.call_args.args[1]['messages'][1]['content'])
         self.assertEqual(context['available_items'][0]['name'],'Coffee')

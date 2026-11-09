@@ -487,81 +487,17 @@
     return (questionLines.length >= 3 ? questionLines : lines).slice(0, 3);
   }
 
+  // Starter questions are disabled: opening AI Hub must not call the model.
   async function generateSuggestions() {
     if (suggestionController) suggestionController.abort();
-    suggestionController = new AbortController();
-    const controller = suggestionController;
     suggestionCards.hidden = true;
     suggestionRetry.hidden = true;
-    suggestionStatus.hidden = false;
-    suggestionStatus.textContent = "Generating questions for this organization…";
-    const selected = windowModel();
-    const model = modelSelect.value;
-    const orgName = orgSelect.selectedOptions[0]?.textContent.trim() || "this organization";
-    try {
-      const response = await fetch(root.dataset.chatUrl, {
-        method: "POST",
-        signal: controller.signal,
-        headers: { "Content-Type": "application/json", "X-CSRFToken": csrf },
-        body: JSON.stringify({
-          organization_slug: orgSelect.value,
-          temporary: true,
-          ...(model ? {model} : {}),
-          model_options: {
-            context_window: selectedContextWindow(),
-            ...(selected?.supports_thinking ? {think: false} : {}),
-          },
-          context_options: selectedContextOptions(),
-          messages: [
-            {role: "user", content: `Create exactly three short, distinct starter questions for ${orgName}. Use only the organization facts and document excerpts supplied with this request. If facts are absent, suggest general questions without inventing details. Do not answer the questions. Return only a JSON array of three strings.`},
-          ],
-        }),
-      });
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || "Could not generate suggested questions.");
-      }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let answer = "";
-      while (true) {
-        const {value, done} = await reader.read();
-        buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const chunk = JSON.parse(line);
-            answer += chunk.message?.content || "";
-          } catch { /* Ignore incomplete stream events. */ }
-        }
-        if (done) break;
-      }
-      if (buffer.trim()) {
-        try { answer += JSON.parse(buffer).message?.content || ""; } catch { /* Ignore a malformed final chunk. */ }
-      }
-      if (controller.signal.aborted) return;
-      const questions = parseSuggestionList(answer);
-      if (questions.length < 3) throw new Error("The model did not return three usable questions.");
-      suggestionCards.querySelectorAll("[data-ai-prompt]").forEach((button, index) => {
-        const question = questions[index].slice(0, 140);
-        button.dataset.aiPrompt = question;
-        button.querySelector("strong").textContent = question;
-      });
-      suggestionStatus.hidden = true;
-      suggestionCards.hidden = false;
-    } catch (error) {
-      if (error.name === "AbortError") return;
-      suggestionStatus.textContent = error.message || "Suggested questions are unavailable.";
-      suggestionRetry.hidden = false;
-    }
+    suggestionStatus.hidden = true;
   }
 
   function queueSuggestions() {
     window.clearTimeout(suggestionTimer);
-    suggestionTimer = window.setTimeout(generateSuggestions, 450);
+    generateSuggestions();
   }
 
   function setTemporaryMode(enabled) {

@@ -226,3 +226,10 @@ orgforms-next.sqlite3-*
 
 # Local speech model weights (downloaded by setup_local_voice).
 .local-models/
+
+# Generated pitch and UI review artifacts.
+/output/
+/.pitch-build/node_modules
+
+# Local pitch deck build files
+/.pitch-build/

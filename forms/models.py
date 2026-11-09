@@ -336,8 +336,9 @@ class ItemSelection(models.Model):
             (item.line_total for item in self.items.all()),
             Decimal("0.00"),
         )
-        discount = subtotal * (self.catalog.discount_percent / Decimal("100")) if self.catalog.discount_percent else Decimal("0.00")
-        tax = subtotal * (self.catalog.tax_rate / Decimal("100")) if self.catalog.tax_rate else Decimal("0.00")
+        lines = list(self.items.select_related("catalog_item__catalog"))
+        discount = sum((line.line_total * ((line.catalog_item.catalog or self.catalog).discount_percent / Decimal("100")) for line in lines), Decimal("0.00"))
+        tax = sum((line.line_total * ((line.catalog_item.catalog or self.catalog).tax_rate / Decimal("100")) for line in lines), Decimal("0.00"))
         total = subtotal - discount + tax
         self.subtotal = subtotal.quantize(Decimal("0.01"))
         self.discount = discount.quantize(Decimal("0.01"))

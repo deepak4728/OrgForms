@@ -481,7 +481,18 @@ def organization_settings(request, org_slug):
                 organization.description = request.POST.get("description", "").strip()
                 organization.purpose = request.POST.get("purpose", "").strip()[:80]
                 organization.business_type = business_type
+                previous_public_header = {key: (organization.profile_data or {}).get(key, "") for key in ("public_image_url", "public_info")}
                 organization.profile_data = clean_profile_data(request.POST.get("profile_data", "{}"), business_type)
+                image_url = request.POST.get('public_image_url', previous_public_header['public_image_url']).strip()
+                from django.core.validators import URLValidator
+                from django.core.exceptions import ValidationError
+                if image_url:
+                    try:
+                        URLValidator(schemes=['https'])(image_url)
+                    except ValidationError:
+                        image_url = ''
+                organization.profile_data['public_image_url'] = image_url[:1000]
+                organization.profile_data['public_info'] = request.POST.get('public_info', previous_public_header['public_info']).strip()[:1000]
                 organization.save(update_fields=("name", "description", "purpose", "business_type", "profile_data", "updated_at"))
                 if json_response:
                     return JsonResponse({

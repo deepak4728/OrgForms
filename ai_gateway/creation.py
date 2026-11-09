@@ -129,8 +129,7 @@ def clean_form_draft(value, *, catalog_ids=None, warnings=None):
                 raise ValidationError('The selected catalog is unavailable in this organization. Choose it in the form editor.')
             if selected is None and len(catalog_ids) == 1:
                 safe['catalog_id'] = catalog_ids[0]
-            elif selected is None and len(catalog_ids) > 1:
-                raise ValidationError('The draft needs an organization catalog. Specify which catalog to use and retry.')
+            safe['item_source'] = 'organization'
         else:
             safe.pop('catalog_id', None)
         if safe.get('type') in ('select','radio'):
@@ -148,7 +147,10 @@ def clean_form_draft(value, *, catalog_ids=None, warnings=None):
             safe['ui_group']=group
             label = safe.get('ui_group_label')
             if not isinstance(label,str) or not label.strip():
-                label=group.replace('_',' ').replace('-',' ').strip().capitalize()
+                label=re.sub(r'^(?:ui[_ -]+)?group[_ -]+', '', group, flags=re.IGNORECASE)
+                label=label.replace('_',' ').replace('-',' ').strip().capitalize() or 'New section'
+            label=re.sub(r'^ui[ _-]+group[ _-]+', '', label, flags=re.IGNORECASE).strip()
+            label=label[:1].upper()+label[1:] if label else 'New section'
             label=label[:200]
 
             if safe.get('ui_group_layout','grid') not in ('grid','stack'):

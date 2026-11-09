@@ -1,0 +1,35 @@
+/* Shared workspace language: clear hierarchy, quiet surfaces, usable controls. */
+:root:has(body.workspace-ui) {
+ --canvas:#f6f7f9; --surface:#fff; --surface-soft:#eef0f3;
+ --ink:#20252d; --text:#20252d; --muted:#606975;
+ --line:#e1e5ea; --line-strong:#c7ced7;
+ --accent:#20252d; --accent-ink:#fff; --focus:#2563a6; --panel-shadow:none;
+}
+:root[data-theme=dark]:has(body.workspace-ui) {
+ --canvas:#17191d; --surface:#202328; --surface-soft:#2a2e35;
+ --ink:#edf0f4; --text:#edf0f4; --muted:#adb5c0;
+ --line:#343a43; --line-strong:#515b68;
+ --accent:#edf0f4; --accent-ink:#17191d; --focus:#83b9f1; --panel-shadow:none;
+}
+.workspace-ui { background:var(--canvas); }
+.workspace-ui .topbar { background:var(--surface); backdrop-filter:none; border-bottom:1px solid var(--line); box-shadow:none; }
+.workspace-ui .top-nav { background:transparent; border:0; box-shadow:none; gap:4px; }
+.workspace-ui .top-nav a { border-radius:6px; }
+.workspace-ui .top-nav a.active { background:var(--surface-soft); color:var(--ink); box-shadow:none; }
+.workspace-ui .brand-mark { background:var(--ink); color:var(--canvas); border-radius:6px; box-shadow:none; }
+.workspace-ui .workspace-banner { background:transparent; border:0; border-radius:0; box-shadow:none; padding:12px 0 20px; }
+.workspace-ui .workspace-banner h1 { font-size:28px; letter-spacing:-.035em; }
+.workspace-ui .eyebrow { text-transform:none; letter-spacing:0; font-family:inherit; color:var(--muted); }
+.workspace-ui .button { display:inline-flex; align-items:center; justify-content:center; border-radius:6px; box-shadow:none; min-height:38px; }
+.workspace-ui .button:hover { transform:none; box-shadow:none; }
+.workspace-ui .org-form-card,.workspace-ui .organization-card,.workspace-ui .data-panel,.workspace-ui .builder-detail-group,.workspace-ui .builder-fields { background:var(--surface); box-shadow:none; border:1px solid var(--line); border-radius:8px; }
+.workspace-ui :is(input,select,textarea):focus-visible,.workspace-ui :is(a,button,summary):focus-visible { outline:2px solid var(--focus); outline-offset:3px; }
+.workspace-ui .workspace-dialog { background:var(--surface); border-radius:10px; border:1px solid var(--line); }
+@media(max-width:640px) {
+ .workspace-ui .workspace-banner h1 { font-size:24px; }
+ .workspace-ui .top-nav { overflow-x:auto; flex-wrap:nowrap; max-width:100%; }
+ .workspace-ui .top-nav a { flex-shrink:0; min-height:42px; }
+}
+.workspace-ui .workspace-form-card,.workspace-ui .org-dashboard-card { background:var(--surface); box-shadow:none; border:1px solid var(--line); border-radius:8px; }
+.workspace-ui .app-main { animation:none; }
+@media(prefers-reduced-motion:reduce) { .workspace-ui * { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }

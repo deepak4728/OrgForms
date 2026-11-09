@@ -65,3 +65,9 @@ class AccountDetailsForm(forms.ModelForm):
             user.save()
             self.save_m2m()
         return user
+
+
+class OrganizationAccountDetailsForm(AccountDetailsForm):
+    """Organization sign-in identity; organization details live on the workspace."""
+    class Meta(AccountDetailsForm.Meta):
+        fields = ('email',)

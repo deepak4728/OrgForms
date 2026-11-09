@@ -1,14 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Profile · OrgForms{% endblock %}
 {% block content %}
-<section class="page-heading profile-heading"><div><p class="eyebrow">Your account</p><h1>Profile</h1><p class="lede">Manage your sign-in details and personal information.</p></div></section>
+<section class="page-heading profile-heading"><div><p class="eyebrow">Your account</p><h1>{% if personal_features %}Profile{% else %}Organization account{% endif %}</h1><p class="lede">{% if personal_features %}Manage your sign-in details and personal information.{% else %}Your organization profile and account access.{% endif %}</p></div></section>
+{% if not personal_features %}
+<section class="surface profile-settings-card">
+  <h2>Organization profile</h2>
+  {% if profile_membership %}
+  <h3>{{ profile_membership.organization.name }}</h3>
+  <p>{{ profile_membership.organization.description|default:"Add a description in organization settings." }}</p>
+  <p class="muted">{{ profile_membership.organization.category_display }} · Your role: {{ profile_membership.get_role_display }}</p>
+  <a class="button secondary" href="{% url 'organizations:settings' profile_membership.organization.slug %}">{% if profile_membership.role == 'admin' or profile_membership.role == 'manager' %}Manage organization profile{% else %}View organization profile{% endif %}</a>
+  {% else %}<p class="muted">This account is not connected to an organization yet.</p><a class="button" href="{% url 'organizations:dashboard' %}">Open organization setup</a>{% endif %}
+</section>
+{% endif %}
 <div class="profile-settings-grid">
   <section class="surface profile-settings-card">
-    <div class="section-heading"><div><h2>Personal details</h2><p class="muted">Update how your account is identified in OrgForms.</p></div></div>
+    <div class="section-heading"><div><h2>{% if personal_features %}Personal details{% else %}Sign-in email{% endif %}</h2><p class="muted">{% if personal_features %}Update how your account is identified in OrgForms.{% else %}This email signs you into the organization account. Organization information is managed above.{% endif %}</p></div></div>
     <form method="post" class="profile-settings-form">{% csrf_token %}<input type="hidden" name="action" value="details">
       {% for field in details_form %}<div class="field"><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% for error in field.errors %}<p class="error">{{ error }}</p>{% endfor %}</div>{% endfor %}
       {% for error in details_form.non_field_errors %}<p class="error">{{ error }}</p>{% endfor %}
-      <button type="submit">Save profile</button>
+      <button type="submit">{% if personal_features %}Save profile{% else %}Save sign-in email{% endif %}</button>
     </form>
   </section>
   <section class="surface profile-settings-card">

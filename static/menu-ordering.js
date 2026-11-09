@@ -43,9 +43,9 @@ window.OrgFormsMenu = {
       for(const option of item.options||[]) {
         const group=node('fieldset','ordering-choice-group');group.append(node('legend','',option.label+(option.required?' *':'')));
         const select=node('select');select.setAttribute('aria-label',option.label);select.required=!!option.required;
-        select.append(new Option('Choose '+option.label,''));
         for(const choice of option.choices) {const extra=cents(option.price_adjustments?.[choice]);select.append(new Option(choice+(extra?' · +'+money(extra):''),choice));}
-        select.value=choices[option.label]||'';select.onchange=()=>{choices[option.label]=select.value;updateTotal();};group.append(select);form.append(group);
+        choices[option.label]=option.choices.includes(choices[option.label])?choices[option.label]:(option.choices[0]||'');
+        select.value=choices[option.label];select.onchange=()=>{choices[option.label]=select.value;updateTotal();};group.append(select);form.append(group);
       }
       const quantityLabel=node('label','ordering-quantity-label','Quantity');
       const stepper=node('div','ordering-stepper');const quantity=node('input');quantity.type='number';quantity.min='1';quantity.step='1';quantity.value=String(editing?.quantity||1);quantity.required=true;quantity.setAttribute('aria-label','Item quantity');
@@ -91,11 +91,38 @@ window.OrgFormsMenu = {
       const visible=items.filter(item=>(!category||(item.category||'General')===category)&&`${item.name} ${item.description||''}`.toLowerCase().includes(query));
       for(const item of visible) {
         const card=node('article','ordering-item'),details=node('div','ordering-item-details');details.append(node('h3','',item.name),node('strong','ordering-price',money(cents(item.price))));
-        if(item.description)details.append(node('p','muted',item.description));
+        if(item.description)details.append(node('p','muted ordering-item-description',item.description));
         if(item.stock!==null&&item.stock!==undefined)details.append(node('small','muted',item.stock===0?'Unavailable':`${item.stock} available`));
         const media=node('div','ordering-item-media');if(item.image_url?.startsWith('https://')){const image=node('img');image.src=item.image_url;image.alt=item.name;image.loading='lazy';image.referrerPolicy='no-referrer';image.onerror=()=>{image.hidden=true;};media.append(image);}
-        const count=selected(item);const add=button(item.stock===0?'Unavailable':count?`${count} added · Add more`:'＋ Add',()=>openItem(item));add.disabled=count>=limit(item);add.setAttribute('aria-label','Add '+item.name);media.append(add);
-        if(item.options?.length)media.append(node('small','muted','Customizable'));
+        const count=selected(item);
+        const detailsButton=button('Customize',()=>openItem(item),'ordering-customize');
+        detailsButton.setAttribute('aria-label','Customize '+item.name);
+        detailsButton.title='Add a different variant as a separate cart item';
+        if(item.options?.length)details.append(detailsButton);
+        if (count) {
+          const step=node('div','ordering-card-stepper');
+          const change=delta=>{
+            const line=lines.filter(entry=>entry.item.id===item.id).at(-1);
+            if(!line || (delta>0 && selected(item)>=limit(item)))return;
+            line.quantity+=delta;
+            if(line.quantity===0)lines.splice(lines.indexOf(line),1);
+            notify();
+          };
+          const minus=button('−',()=>change(-1)),plus=button('+',()=>change(1)),value=node('output','',String(count));
+          minus.setAttribute('aria-label','Decrease '+item.name);plus.setAttribute('aria-label','Increase '+item.name);
+          plus.title='Add one more of the most recently selected variant';
+          plus.disabled=count>=limit(item);value.setAttribute('aria-live','polite');value.setAttribute('aria-label',item.name+' quantity');
+          step.append(minus,value,plus);media.append(step);
+        } else {
+          const add=button(item.stock===0?'Unavailable':'＋ Add',()=>{
+            if(item.options?.length){openItem(item);return;}
+            if(selected(item)>=limit(item))return;
+            lines.push({item,options:{},notes:'',quantity:1});notify();
+          });
+          add.disabled=limit(item)<1;add.setAttribute('aria-label','Add '+item.name);media.append(add);
+        }
+
+
         card.append(details,media);content.append(card);
       }
       if(!visible.length)content.append(node('p','muted',items.length?'No items match your search.':'No available Library items yet.'));

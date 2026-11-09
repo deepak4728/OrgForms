@@ -397,7 +397,7 @@
   });
   const formSearch = document.querySelector('[data-form-search]');
   const formStatusButtons = [...document.querySelectorAll('button[data-form-status]')];
-  let selectedFormStatus = '';
+  let selectedFormStatus = formStatusButtons.find(button => button.getAttribute('aria-pressed') === 'true')?.dataset.formStatus || '';
   if (formSearch) {
     const formCards = [...document.querySelectorAll('[data-form-card]')];
     const noResults = document.querySelector('[data-form-no-results]');
@@ -419,6 +419,7 @@
       formStatusButtons.forEach((option) => option.setAttribute('aria-pressed', String(option === button)));
       applyFormFilters();
     }));
+    applyFormFilters();
   }
   const peopleTabs = [...document.querySelectorAll('[data-people-tab]')];
   if (peopleTabs.length) {
@@ -788,3 +789,17 @@
     if (createDialog) openDialog(createDialog);
   }
 })();
+
+// Dismiss the profile menu without requiring a second click on its trigger.
+document.addEventListener('click', event => {
+  document.querySelectorAll('.profile-menu[open]').forEach(menu => {
+    if (!menu.contains(event.target)) menu.open = false;
+  });
+});
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  document.querySelectorAll('.profile-menu[open]').forEach(menu => {
+    menu.open = false;
+    menu.querySelector('summary')?.focus();
+  });
+});

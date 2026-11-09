@@ -4,7 +4,7 @@ from datetime import date, time
 from django.core.exceptions import ValidationError
 
 
-FIELD_TYPES = {"text", "textarea", "number", "email", "tel", "select", "radio", "date", "checkbox", "rating", "file", "item_cards", "record_reference", "multiselect", "time", "heading", "paragraph", "image"}
+FIELD_TYPES = {"text", "textarea", "quantity", "number", "email", "tel", "select", "radio", "date", "checkbox", "rating", "file", "item_cards", "record_reference", "multiselect", "time", "heading", "paragraph", "image"}
 
 
 def validate_form_schema(schema):
@@ -70,7 +70,7 @@ def validate_form_schema(schema):
             options = field.get("options")
             if not isinstance(options, list) or not options or any(not isinstance(option, str) or not option.strip() for option in options):
                 raise ValidationError(f"Field {field_id} requires a non-empty list of text options.")
-        if field.get("type") in {"number", "rating"}:
+        if field.get("type") in {"number", "rating", "quantity"}:
             try:
                 bounds = [float(field[key]) for key in ("min", "max") if field.get(key) is not None]
                 if not all(math.isfinite(bound) for bound in bounds) or (len(bounds) == 2 and bounds[0] > bounds[1]):
@@ -112,7 +112,7 @@ def _visible(field, data, fields=None):
     if fields and not _visible(fields[parent], data, fields):
         return False
     value, expected = data.get(parent), condition.get("equals")
-    if fields and fields[parent]["type"] in {"number", "rating"}:
+    if fields and fields[parent]["type"] in {"number", "rating", "quantity"}:
         try:
             return not isinstance(value, bool) and not isinstance(expected, bool) and math.isfinite(float(value)) and float(value) == float(expected)
         except (TypeError, ValueError):
@@ -145,7 +145,7 @@ def validate_submission(form, data, *, schema=None):
             continue
         if kind == "email" and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", str(value)):
             errors[field_id] = "Enter a valid email address."
-        elif kind in {"number", "rating"}:
+        elif kind in {"number", "rating", "quantity"}:
             try:
                 numeric = float(value)
             except (TypeError, ValueError):
@@ -153,6 +153,9 @@ def validate_submission(form, data, *, schema=None):
                 continue
             if isinstance(value, bool) or not math.isfinite(numeric):
                 errors[field_id] = "Enter a finite number."
+                continue
+            if kind == "quantity" and not numeric.is_integer():
+                errors[field_id] = "Enter a whole quantity."
                 continue
             if field.get("min") is not None and numeric < float(field["min"]):
                 errors[field_id] = f"Enter a value of at least {field['min']}."
@@ -201,6 +204,10 @@ def normalize_schema(schema, organization):
     for field in schema.get("fields", []):
         if field.get("type") != "item_cards":
             continue
+        if field.get('item_source', 'catalog') not in ('organization', 'catalog'):
+            raise ValidationError({field['id']: 'Choose a valid item source.'})
+        if 'item_category' in field and (not isinstance(field['item_category'], str) or len(field['item_category']) > 100):
+            raise ValidationError({field['id']: 'Choose a valid category.'})
         catalog_id = field.get("catalog_id")
         if catalog_id is None:
             field["catalog_id"] = Catalog.for_organization(organization).pk
@@ -221,9 +228,19 @@ def normalize_schema(schema, organization):
             if not isinstance(ids, list) or not ids or len(ids) > 500 or any(type(pk) is not int or pk < 1 for pk in ids) or len(ids) != len(set(ids)):
                 raise ValidationError({field['id']: 'Select at least one valid library item.'})
             from .models import CatalogItem
-            if CatalogItem.objects.filter(pk__in=ids, catalog_id=field['catalog_id']).count() != len(ids):
+            if items_for_field(field, organization).filter(pk__in=ids).count() != len(ids):
                 raise ValidationError({field['id']: 'Selected items must belong to this question’s catalog.'})
     return schema
+
+
+def items_for_field(field, organization):
+    from .models import CatalogItem
+    items = CatalogItem.objects.filter(catalog__organization=organization)
+    if field.get('item_source') != 'organization':
+        items = items.filter(catalog_id=field['catalog_id'])
+    if field.get('item_category'):
+        items = items.filter(category=field['item_category'])
+    return items
 
 
 def save_item_selections(form, submission, data, payload, *, schema=None):
@@ -253,7 +270,7 @@ def save_item_selections(form, submission, data, payload, *, schema=None):
                     raise ValueError
             except (ValueError, TypeError, AttributeError):
                 raise ValidationError({field['id']: 'Choose valid items and whole quantities from 1 to 50.'})
-            item = CatalogItem.objects.filter(pk=item_id, catalog_id=field['catalog_id'], catalog__organization=form.organization, is_available=True).first()
+            item = items_for_field(field, form.organization).filter(pk=item_id, is_available=True).first()
             if item is None or ('item_ids' in field and item_id not in field['item_ids']):
                 raise ValidationError({field['id']: 'An item is unavailable or belongs to another catalog.'})
             from .item_options import validate_options

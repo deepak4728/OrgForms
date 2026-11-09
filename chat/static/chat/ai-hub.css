@@ -1201,3 +1201,18 @@ body:has(#ai-hub) > .app-main {
 #ai-delete-confirm { background:var(--ink); color:var(--canvas); }
 .temporary-chat .ai-history-bulk { display:none; }
 @media (hover:none) { .ai-history-more { opacity:1; } }
+
+/* Compact context and local-runtime controls. */
+.ai-context-popover { width:min(270px,calc(100vw - 24px)); gap:3px; padding:10px; border-radius:12px; }
+.ai-context-option { padding:5px 4px; align-items:center; }
+.ai-context-option small { display:none; }
+.ai-context-option strong { font-size:12px; font-weight:500; }
+.ai-context-always { padding:5px 6px; }
+.ai-compact-controls { display:flex; align-items:center; gap:8px; padding:3px 0 7px; }
+.ai-compact-controls small { font-size:10px; line-height:1.35; }
+.ai-context-note { font-size:10px; margin:4px 0 0; line-height:1.4; }
+.ai-runtime-unified { width:min(280px,calc(100vw - 24px)); padding:12px; }
+.ai-runtime-unified .ai-runtime-section { padding:8px 0; margin-top:8px; }
+.ai-runtime-unified .ai-window-control { margin-top:8px; }
+.ai-runtime-unified #ai-ollama-default-status:empty { display:none; }
+.ai-runtime-raw[hidden] { display:none!important; }

@@ -2,8 +2,8 @@
 {% load static %}
 {% block title %}AI Hub · OrgForms{% endblock %}
 {% block head %}
-  <link rel="stylesheet" href="{% static 'chat/ai-hub.css' %}?v=20261028-context-bar-2">
-  <script src="{% static 'chat/ai-hub.js' %}?v=20261026-history-actions-1" defer></script>
+  <link rel="stylesheet" href="{% static 'chat/ai-hub.css' %}?v=20261104-compact-controls">
+  <script src="{% static 'chat/ai-hub.js' %}?v=20261104-no-starters" defer></script>
   <script src="{% static 'chat/ollama-runtime.js' %}?v=20261025-4" defer></script>
 {% endblock %}
 {% block content %}
@@ -38,10 +38,10 @@
             <div class="ai-runtime-panel ai-runtime-unified">
               <div class="ai-runtime-row"><strong>Ollama</strong><div class="ai-runtime-inline"><button id="ai-ollama-refresh" type="button" class="ai-runtime-refresh" aria-label="Refresh Ollama panel">↻</button><button id="ai-ollama-toggle" type="button" role="switch" aria-checked="false" aria-label="Ollama server" disabled>Off</button></div></div>
               <p id="ai-ollama-status" role="status">Checking server…</p>
-              <section class="ai-runtime-section"><div class="ai-runtime-row"><strong>Running now</strong><code>ollama ps</code></div><div id="ai-ollama-running" aria-live="polite">Checking loaded models…</div><details class="ai-runtime-raw"><summary>Command output</summary><pre id="ai-ollama-ps-output" tabindex="0">Checking…</pre></details></section>
+              <section class="ai-runtime-section"><div class="ai-runtime-row"><strong>Running now</strong><code>ollama ps</code></div><div id="ai-ollama-running" aria-live="polite">Checking loaded models…</div><details class="ai-runtime-raw" hidden><summary>Command output</summary><pre id="ai-ollama-ps-output" tabindex="0">Checking…</pre></details></section>
               <section class="ai-runtime-section"><label class="ai-runtime-field" for="ai-ollama-default">Default model</label><div class="ai-runtime-inline"><select id="ai-ollama-default" disabled><option value="">Loading installed models…</option></select><button id="ai-ollama-save-default" type="button" disabled>Save</button></div><p id="ai-ollama-default-status" role="status"></p>
-              <label class="ai-window-control" for="ai-context-window"><span>Context window</span><select id="ai-context-window" aria-describedby="ai-context-window-note"><option value="">Auto · 4K</option></select></label><small id="ai-context-window-note" class="ai-window-note">Input + reply tokens for the current chat model. Saved in this browser.</small></section>
-              <small>This computer · shared server. Default model applies to this organization; turning off interrupts local AI requests.</small>
+              <label class="ai-window-control" for="ai-context-window"><span>Context window</span><select id="ai-context-window"><option value="">Auto · 4K</option></select></label></section>
+
             </div>
           </details>
           <button class="ai-header-action ai-new-chat" id="ai-new-chat" type="button" aria-label="New chat" title="New chat"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v14M3 10h14"/></svg></button>
@@ -59,7 +59,7 @@
         <div class="ai-welcome" id="ai-welcome">
           <h2>How can I help?</h2>
           <p>Ask about your forms and organization activity.</p>
-          <p class="ai-suggestion-status" id="ai-suggestion-status" role="status">Generating questions for this organization…</p>
+          <p class="ai-suggestion-status" id="ai-suggestion-status" role="status" hidden></p>
           <button class="ai-suggestion-retry" id="ai-suggestion-retry" type="button" hidden>Try again</button>
           <div class="ai-prompts" id="ai-prompts" aria-label="Suggested questions" hidden>
             <button type="button" data-ai-prompt=""><span class="ai-prompt-icon" aria-hidden="true">↗</span><span><strong></strong></span></button>
@@ -109,14 +109,14 @@
               <summary class="ai-control ai-context-trigger" aria-label="Choose what context AI Hub can use" title="Choose what context AI Hub can use"><span>Context</span><span id="ai-context-summary">Org · Docs</span><span class="ai-context-caret" aria-hidden="true">⌃</span></summary>
               <div class="ai-context-popover" id="ai-context-popover">
                 <div class="ai-context-heading"><strong>Shared with the model</strong></div>
-                <div class="ai-compact-controls"><button type="button" id="ai-compact-context">Compact context</button><small id="ai-compact-note" role="status">Keep short excerpts of earlier turns and the latest four messages. Details may be omitted; saved chat stays intact.</small></div>
+                <div class="ai-compact-controls"><button type="button" id="ai-compact-context">Compact context</button><small id="ai-compact-note" role="status">Shorten earlier turns; keep recent messages.</small></div>
                 <div class="ai-context-always"><span>Current message</span><strong>Always on</strong></div>
-                <label class="ai-context-option"><input id="ai-context-history" type="checkbox" checked><span><strong>Earlier messages</strong><small>Previous turns in this conversation</small></span></label>
-                <label class="ai-context-option"><input id="ai-context-organization" type="checkbox" checked><span><strong>Organization overview</strong><small>Visible submission count and item totals</small></span></label>
-                <label class="ai-context-option"><input id="ai-context-organization-profile" type="checkbox"><span><strong>Organization profile</strong><small>Purpose, description, category, and saved business details</small></span></label>
-                <label class="ai-context-option"><input id="ai-context-documents" type="checkbox" checked><span><strong>Relevant documents</strong><small>Matching excerpts from organization documents</small></span></label>
-                <label class="ai-context-option" id="ai-context-memory-option"><input id="ai-context-memory" type="checkbox"><span><strong>Saved memory</strong><small id="ai-context-memory-note">Checking saved notes…</small></span></label>
-                <label class="ai-context-option ai-memory-updates-option"><input id="ai-context-memory-updates" type="checkbox"><span><strong>Build saved notes from chats</strong><small>Allow future conversations to update this organization’s notes</small></span></label>
+                <label class="ai-context-option" title="Previous turns in this conversation"><input id="ai-context-history" type="checkbox" checked><span><strong>Earlier messages</strong><small>Previous turns in this conversation</small></span></label>
+                <label class="ai-context-option" title="Visible submission count and item totals"><input id="ai-context-organization" type="checkbox" checked><span><strong>Organization overview</strong><small>Visible submission count and item totals</small></span></label>
+                <label class="ai-context-option" title="Purpose, description, category, and saved business details"><input id="ai-context-organization-profile" type="checkbox"><span><strong>Organization profile</strong><small>Purpose, description, category, and saved business details</small></span></label>
+                <label class="ai-context-option" title="Matching excerpts from organization documents"><input id="ai-context-documents" type="checkbox" checked><span><strong>Relevant documents</strong><small>Matching excerpts from organization documents</small></span></label>
+                <label class="ai-context-option" id="ai-context-memory-option" title="Checking saved notes…"><input id="ai-context-memory" type="checkbox"><span><strong>Saved memory</strong><small id="ai-context-memory-note">Checking saved notes…</small></span></label>
+                <label class="ai-context-option ai-memory-updates-option" title="Allow future conversations to update this organization’s notes"><input id="ai-context-memory-updates" type="checkbox"><span><strong>Build saved notes from chats</strong><small>Allow future conversations to update this organization’s notes</small></span></label>
                 <details class="ai-account-memory" id="ai-account-memory-panel"><summary>Account memory</summary>
                   <p>Private to your account, across your chats and organizations. Temporary chats never read or update it.</p>
                   <label><input id="ai-account-memory-use" type="checkbox"> Use account notes in replies</label>
@@ -126,8 +126,7 @@
                   <div class="ai-account-memory-actions"><button type="button" id="ai-account-memory-save">Save notes</button><button type="button" id="ai-account-memory-refresh">Refresh</button></div>
                   <small id="ai-account-memory-status" role="status">Loading account notes…</small>
                 </details>
-                <label class="ai-context-option ai-profile-context" id="ai-profile-context-wrap" hidden><input id="ai-profile-context" type="checkbox"><span><strong>Saved profile</strong><small>Personal details for this request</small></span></label>
-                <details class="ai-suggestions-info"><summary>About the three suggestions</summary><p>Generated when AI Hub loads or the organization/model changes, using your selected context switches. The chosen context window also applies.</p><p>Always: the selected organization’s name and an instruction to return three short questions. Overview: visible submission count and item-selection count/total. Profile: purpose, description, category and saved business details. Documents: up to three matching excerpts.</p><p>Suggestions are temporary. They receive no earlier chat, saved memory, personal profile, attachments, full form schemas, member directory or dataset records. With all context switches off, only the organization name and question-generation instruction are sent.</p></details>
+                <label class="ai-context-option ai-profile-context" id="ai-profile-context-wrap" hidden title="Personal details for this request"><input id="ai-profile-context" type="checkbox"><span><strong>Saved profile</strong><small>Personal details for this request</small></span></label>
                 <p class="ai-context-note">Turning off earlier messages excludes them from model requests, but keeps them in chat history. Attached files and selected profile details are saved as part of their message.</p>
               </div>
             </details>

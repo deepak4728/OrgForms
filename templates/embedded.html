@@ -4,10 +4,11 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}OrgForms{% endblock %}</title>
-  <link rel="stylesheet" href="{% static 'app.css' %}?v=20261103-ordering-2">
+  <link rel="stylesheet" href="{% static 'app.css' %}?v=20261105-compact-header">
+  <link rel="stylesheet" href="{% static 'workspace.css' %}?v=20261104-2">
   {% block head %}{% endblock %}
 </head>
-<body class="embedded-page">
+<body class="embedded-page workspace-ui">
 <main class="embedded-main">{% block content %}{% endblock %}</main>
 <script>
 document.documentElement.dataset.theme=localStorage.getItem('orgforms-theme')||'light';

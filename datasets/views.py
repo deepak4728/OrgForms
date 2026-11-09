@@ -150,11 +150,13 @@ def api_grants(request, dataset_id):
 
 @login_required
 def library(request, org_slug):
-    from forms.element_catalog import PREBUILT, STARTERS
+    from forms.element_catalog import PREBUILT, STARTERS, starter_groups
     organization = get_object_or_404(Organization, slug=org_slug)
     membership = require_membership(request.user, organization)
     can_manage = membership.role in ("admin", "manager")
-    selected_view = request.GET.get('view', 'datasets')
+    selected_view = request.GET.get('view', 'items' if can_manage else 'datasets')
+    if selected_view == 'sections':
+        selected_view = 'elements'
     if selected_view not in ('items', 'elements') or not can_manage:
         selected_view = 'datasets'
     from .models import UIElement
@@ -169,7 +171,7 @@ def library(request, org_slug):
         "item_count": CatalogItem.objects.filter(catalog__organization=organization).count() if can_manage else None,
         "selected_view": selected_view,
         "ui_elements": elements,
-        "prebuilt_elements": PREBUILT, "element_starters": STARTERS,
+        "prebuilt_elements": PREBUILT, "element_starters": STARTERS, "starter_groups": starter_groups(),
         "datasets": datasets,
         "items": CatalogItem.objects.filter(catalog__organization=organization).order_by('category', 'name') if can_manage and selected_view == 'items' else [],
     })
@@ -326,7 +328,7 @@ def ui_element_editor(request, org_slug, element_id=None):
     require_membership(request.user, organization, manage=True)
     if organization.is_archived:
         raise PermissionDenied('Restore this organization before editing UI elements.')
-    element = get_object_or_404(UIElement, pk=element_id, organization=organization) if element_id else UIElement(organization=organization, schema={'fields':[{'id':'quantity','label':'Quantity','type':'number','required':True,'min':1}]})
+    element = get_object_or_404(UIElement, pk=element_id, organization=organization) if element_id else UIElement(organization=organization, schema={'fields':[{'id':'answer','label':'Your answer','type':'text','required':False}]})
     if element_id is None:
         from forms.element_catalog import PREBUILT
         prebuilt = next((entry for entry in PREBUILT if entry[0] == request.GET.get('prebuilt')), None)
@@ -362,13 +364,25 @@ def ui_element_editor(request, org_slug, element_id=None):
         if request.GET.get('dialog') == '1':
             return render(request, 'datasets/dialog_complete.html')
         return redirect(reverse('datasets:library', args=[org_slug]) + '?view=elements')
-    return render(request, 'datasets/ui_element_editor.html', {'organization':organization,'element':element if element_id else None,'form':form,'base_template':'embedded.html' if request.GET.get('dialog')=='1' else 'base.html','embedded':request.GET.get('dialog')=='1'})
+    from forms.models import CatalogItem
+    preview_items = list(CatalogItem.objects.filter(catalog__organization=organization, is_available=True).values('id', 'catalog_id', 'name', 'category', 'description', 'price', 'options', 'stock', 'image_url'))
+    return render(request, 'datasets/ui_element_editor.html', {'preview_items':preview_items,'organization':organization,'element':element if element_id else None,'form':form,'base_template':'embedded.html' if request.GET.get('dialog')=='1' else 'base.html','embedded':request.GET.get('dialog')=='1'})
 
-@api_view(['GET'])
+@api_view(['GET', 'POST'])
 def api_ui_elements(request, org_slug):
     from .models import UIElement
     organization = get_object_or_404(Organization, slug=org_slug)
     require_membership(request.user, organization, manage=True)
+    if request.method == 'POST':
+        if organization.is_archived:
+            raise PermissionDenied('Restore this organization before changing saved sections.')
+        element = UIElement(organization=organization, name=request.data.get('name', ''), description=request.data.get('description', ''), schema=request.data.get('schema', {}))
+        try:
+            element.full_clean()
+            element.save()
+        except (ValidationError, IntegrityError) as error:
+            return Response({'detail': '; '.join(error.messages) if isinstance(error, ValidationError) else 'A saved section already uses this name.'}, status=400)
+        return Response({'id': str(element.pk), 'name': element.name, 'description': element.description, 'schema': element.schema}, status=201)
     return Response(list(UIElement.objects.filter(organization=organization).values('id', 'name', 'description', 'schema')))
 
 @api_view(['POST'])
@@ -407,3 +421,45 @@ def draft_ui_element(request, org_slug):
         return Response({'name':result['name'][:200], 'description':result['description'], 'schema':schema})
     except (ValidationError, KeyError, TypeError, ValueError) as exc:
         return Response({'error':str(exc)}, status=400)
+
+
+@login_required
+@xframe_options_sameorigin
+def library_item_editor(request, org_slug, item_id=None):
+    from django import forms as django_forms
+    from forms.models import Catalog
+    organization = get_object_or_404(Organization, slug=org_slug)
+    require_membership(request.user, organization, manage=True)
+    if organization.is_archived:
+        raise PermissionDenied('Restore this organization before changing items.')
+    item = get_object_or_404(CatalogItem, pk=item_id, catalog__organization=organization) if item_id else None
+    class ItemForm(django_forms.ModelForm):
+        class Meta:
+            model = CatalogItem
+            fields = ('name', 'category', 'price', 'description', 'image_url', 'stock', 'is_available', 'options')
+            widgets = {'description': django_forms.Textarea(attrs={'rows': 2}), 'options': django_forms.HiddenInput()}
+        def clean_options(self):
+            value = self.cleaned_data.get('options') or []
+            from forms.item_options import validate_options
+            validate_options(value)
+            return value
+        def clean_price(self):
+            value = self.cleaned_data['price']
+            if value < 0:
+                raise django_forms.ValidationError('Enter a price of zero or more.')
+            return value
+        def clean_image_url(self):
+            value = self.cleaned_data.get('image_url', '')
+            if value and not value.startswith('https://'):
+                raise django_forms.ValidationError('Use an HTTPS image address.')
+            return value
+    form = ItemForm(request.POST if request.method == 'POST' else None, instance=item, initial={'is_available': True, 'options': []} if not item else None)
+    if request.method == 'POST' and form.is_valid():
+        saved = form.save(commit=False)
+        if not item:
+            saved.catalog = Catalog.for_organization(organization)
+        saved.save()
+        if request.GET.get('dialog') == '1':
+            return render(request, 'datasets/dialog_complete.html')
+        return redirect(reverse('datasets:library', args=[org_slug]) + '?view=items')
+    return render(request, 'datasets/item_editor.html', {'organization': organization, 'item': item, 'form': form, 'base_template': 'embedded.html' if request.GET.get('dialog') == '1' else 'base.html', 'embedded': request.GET.get('dialog') == '1'})

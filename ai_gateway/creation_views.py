@@ -200,15 +200,15 @@ def form_draft(request,org_slug):
         field_schema['properties']['type']['enum'].append('item_cards')
         field_schema['properties']['catalog_id'] = {'type':'integer'}
     system = 'Draft a relevant form as JSON: title, description, purpose, fields. Use 3–12 questions with stable English ids, labels, types and required booleans. Purpose must describe this specific form task in at most 120 characters, not repeat the organization general purpose. Only ask for information needed by the request. Choice fields must have options. Do not invent organization facts, catalog items, dataset IDs, or permissions. '
-    system += ' Automatically group cohesive related fields into named reusable components: e.g. seat number, orientation and booking preference share ui_group seat_booking and ui_group_label Seat booking. Contact details can form a separate group. Every child in a group must carry identical ui_group, ui_group_label and ui_group_layout (grid for compact inputs, stack for long content). Keep unrelated questions separate. Never create text inputs for Add/remove buttons or file uploads for displaying creator images; use item_cards for inventory selection. '
-    system += ' Set max_length only if the user explicitly requests a character limit. Use layout_width only as a display preference. Keep purpose under 120 characters. If the user requests catalog items, add one item_cards field tied to an available catalog id. Item cards show the catalog’s available items; never invent or create catalog items. Never invent phone numbers or identifiers as dropdown choices; use a text or telephone input. '
+    system += ' Automatically group cohesive related fields into named sections: e.g. seat number, orientation and booking preference share ui_group seat_booking and ui_group_label Seat booking. Contact details can form a separate group. Use plain readable section titles such as Order info or Drink selection for ui_group_label; never include technical prefixes such as ui_group or Ui group in the title. Every child in a group must carry identical ui_group, ui_group_label and ui_group_layout (grid for compact inputs, stack for long content). Keep unrelated questions separate. Never create text inputs for Add/remove buttons or file uploads for displaying creator images; use item_cards for inventory selection. '
+    system += ' Set max_length only if the user explicitly requests a character limit. Use layout_width only as a display preference. Keep purpose under 120 characters. If the user requests catalog items, add one item_cards field to show current organization Library items. The creator can select a category or specific items later; never invent or create catalog items. Never invent phone numbers or identifiers as dropdown choices; use a text or telephone input. '
     if data['mode']=='questions':
         system += 'Only propose new questions, without repeating current questions or their ids. '
     requested_groups=[]
     for pattern,name in [(r'personal\s+details|contact\s+details','Personal details'),(r'seat\s*(?:booking|allocation)','Seat booking'),(r'item.*(?:image|quantity)|menu.*card','Item selection')]:
         if re.search(pattern,data['prompt'],re.I): requested_groups.append(name)
     if len(requested_groups)>1:
-        system += ' Keep these requested components separate and name them exactly: '+', '.join(requested_groups)+'. Do not merge them. '
+        system += ' Keep these requested sections separate and name them exactly: '+', '.join(requested_groups)+'. Do not merge them. '
     try:
         generated, model, thinking, reasoning_mode = local_json(json.dumps(context,ensure_ascii=False),system,data.get('model') or AIConfiguration.for_organization(org).default_model,schema,think=data.get('think'))
         if len(requested_groups)>1:
@@ -222,13 +222,7 @@ def form_draft(request,org_slug):
         fields = generated.get('fields')
         wants_cards = bool(re.search(r'\bitem[\s-]*cards?\b|\b(?:menu|item selection)\b.*\b(?:image|quantity|add|select)\b', data['prompt'], re.I | re.S))
         if isinstance(fields, list) and wants_cards and membership.role in ('admin','manager'):
-            if len(catalogs) > 1:
-                matches = [c for c in catalogs if c['name'].casefold() in data['prompt'].casefold()]
-                if len(matches) != 1:
-                    raise ValidationError('Please name the organization catalog to use for item cards.')
-                selected_catalog = matches[0]['id']
-            else:
-                selected_catalog = catalog_ids[0] if catalog_ids else None
+            selected_catalog = catalog_ids[0] if catalog_ids else None
             original_count = len(fields)
             item_names = {item['name'].strip().casefold() for item in items}
             fields[:] = [field for field in fields if not (
@@ -306,7 +300,7 @@ def form_draft(request,org_slug):
                 if not isinstance(generated.get(key),str): generated[key] = ''
         safe = clean_form_draft(generated, catalog_ids=catalog_ids if membership.role in ('admin','manager') else None, warnings=warnings)
         if any(field['type'] == 'item_cards' for field in safe['fields']):
-            warnings.append('Item cards show all available items in the selected catalog. Review the catalog before publishing.' if catalog_ids else 'The catalog is empty. Add items before publishing.')
+            warnings.append('The form shows all available Library items. Review the items and choices before publishing.' if items else 'The Library has no items yet. Add items before publishing.')
         request_text = data['prompt'].lower()
         alternative_contact = re.search(r'\b(?:id|identifier|identification)\b.{0,40}\bor\b.{0,40}\b(?:mobile|phone|telephone)\b|\b(?:mobile|phone|telephone)\b.{0,40}\bor\b.{0,40}\b(?:id|identifier|identification)\b', request_text)
         if alternative_contact or any(phrase in request_text for phrase in ('at least one', 'one of', 'either')):

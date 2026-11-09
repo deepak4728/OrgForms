@@ -36,3 +36,30 @@ class AccountPrivacyTests(TestCase):
         self.assertEqual(b''.join(download.streaming_content), b'%PDF-private')
         self.client.force_login(self.other)
         self.assertEqual(self.client.get(url).status_code, 404)
+
+class OrganizationProfileTests(TestCase):
+    def setUp(self):
+        from .models import AccountSpace
+        from organizations.models import Organization, OrganizationMembership
+        self.user = get_user_model().objects.create_user('org@example.test', email='org@example.test', first_name='Preserved')
+        AccountSpace.objects.create(user=self.user, kind=AccountSpace.ORGANIZATION_CREATE)
+        self.org = Organization.objects.create(name='Example workspace', created_by=self.user)
+        OrganizationMembership.objects.create(organization=self.org, user=self.user, role='admin')
+        self.client.force_login(self.user)
+
+    def test_organization_profile_shows_workspace_and_not_personal_fields(self):
+        response = self.client.get(reverse('accounts:profile'))
+        self.assertContains(response, 'Example workspace')
+        self.assertContains(response, 'Manage organization profile')
+        self.assertNotContains(response, 'name="details-first_name"')
+        self.assertNotContains(response, '<h2>Personal details</h2>')
+        self.assertFalse(UserPortfolio.objects.filter(user=self.user).exists())
+
+    def test_email_update_preserves_names_and_organization(self):
+        response = self.client.post(reverse('accounts:profile'), {'action':'details', 'details-email':'updated@example.test', 'details-first_name':'Overwrite'})
+        self.assertEqual(response.status_code, 302)
+        self.user.refresh_from_db()
+        self.org.refresh_from_db()
+        self.assertEqual(self.user.first_name, 'Preserved')
+        self.assertEqual(self.user.username, 'updated@example.test')
+        self.assertEqual(self.org.name, 'Example workspace')

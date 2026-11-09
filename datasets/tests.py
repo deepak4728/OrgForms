@@ -42,7 +42,7 @@ class DatasetFoundationTests(TestCase):
             self.assertContains(response, 'embedded-page')
             self.assertEqual(response.headers.get("X-Frame-Options"), "SAMEORIGIN")
         response = self.client.get(reverse("datasets:library", args=[self.org.slug]), {"view": "elements"})
-        self.assertContains(response, 'data-library-editor="Edit UI element"')
+        self.assertContains(response, 'data-library-editor="Edit saved section"')
         self.assertContains(response, 'id="library-editor-dialog"')
 
     def test_element_delete_confirmation_and_scope(self):
@@ -52,7 +52,7 @@ class DatasetFoundationTests(TestCase):
         response = self.client.post(url, {'action': 'delete', 'confirm_name': 'wrong'})
         self.assertEqual(response.status_code, 400)
         self.assertTrue(UIElement.objects.filter(pk=element.pk).exists())
-        self.assertContains(response, 'Save element', status_code=400)
+        self.assertContains(response, 'Save section', status_code=400)
         self.assertContains(response, 'id="delete-element-name"', count=1, status_code=400)
         self.client.force_login(self.member)
         self.assertEqual(self.client.post(url, {'action': 'delete', 'confirm_name': 'Disposable'}).status_code, 403)

@@ -1,0 +1,11 @@
+{% extends "datasets/base.html" %}{% load static %}
+{% block data_head %}<script src="{% static 'item-options.js' %}?v=20261104-simple" defer></script>{% endblock %}
+{% block data_content %}
+<form method="post" class="library-item-editor">{% csrf_token %}{{ form.non_field_errors }}
+<p class="muted">You provide the item details. People choose the quantity and options in your form.</p>
+<div class="data-form-grid">{% for field in form.visible_fields %}{% if field.name != 'stock' and field.name != 'image_url' and field.name != 'is_available' %}<div class="field item-field-{{ field.name }}"><label for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{{ field.errors }}</div>{% endif %}{% endfor %}</div>
+<details open><summary>Photo &amp; availability</summary><div class="data-form-grid"><div class="field"><label for="id_image_url">Photo link</label>{{ form.image_url }}{{ form.image_url.errors }}</div><div class="field"><label for="id_stock">Quantity available</label>{{ form.stock }}{{ form.stock.errors }}<small>Leave blank if you do not track stock.</small></div></div><label class="data-check">{{ form.is_available }} Show this item in forms</label></details>
+<details {% if form.options.errors %}open{% endif %}><summary>Choices such as size, spice, or extras</summary><p class="muted">People choose these when adding the item. A choice can have an extra price.</p>{{ form.options }}{{ form.options.errors }}<div data-item-options-editor></div><button type="button" class="secondary" data-add-item-option>＋ Add choice</button></details>
+<div class="data-footer">{% if embedded %}<button type="button" class="secondary" onclick="window.parent.postMessage({type:'orgforms:library-close'},location.origin)">Cancel</button>{% endif %}<button type="submit">Save item</button></div>
+</form>
+{% endblock %}

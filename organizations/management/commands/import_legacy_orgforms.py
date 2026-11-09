@@ -102,12 +102,15 @@ class Command(BaseCommand):
                         values['name'] = values['business_name']
                     if table in ('forms_catalogitem', 'forms_itemselection'):
                         values['catalog_id'] = values['business_id']
+                    if table == 'forms_catalogitem':
+                        values.update(stock=None, options='[]', image_url='')
                     if table == 'forms_selectionline':
+                        values.update(notes='', options='{}')
                         values.update(selection_id=values['order_id'], catalog_item_id=values['menu_item_id'], name=names[values['menu_item_id']])
                     if table == 'forms_itemselection':
                         values['submission_id'], values['field_id'] = links.get(values['id'], (None, ''))
                     if table == 'forms_dynamicform':
-                        values.update(capture_sequence=0, response_limit=None)
+                        values.update(capture_sequence=0, response_limit=None, custom_edit_access=False)
                         values.update(destination_schema_id=None, field_mapping='{}')
                         schema = json.loads(values['schema'])
                         for field in schema.get('fields', []):
